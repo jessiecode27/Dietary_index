@@ -13,7 +13,7 @@ editor_options:
 
 ```{r}
 #| label: load packages
-#| include: true             #this chunk is not included in the report
+#| include: false             #this chunk is not included in the report
 library(dplyr)
 library(DataExplorer)
 library(knitr)
@@ -480,7 +480,7 @@ nhanes_merged_0518$M_CVD <- apply(
 ```{r}
 ## Total diabetes = Diagnosed diabetes - self-reported diabetes (DIQ010 == 1) 
 #                   OR Fasting plasma glucose (LBXGLU) ≥ 126 mg/dL OR HbA1c (LBXGH) ≥ 6.5%
-# AND People with missing values for either fasting glucose or A1C and pregnant women were excluded => will be included in the exclusion criteria 
+# (AND People with missing values for either fasting glucose or A1C and pregnant women were excluded => will be included in the exclusion criteria) 
 
 # Excluded T1D: diabetes diagnosed before the age of 30 years (DID040<30) 
 #               AND who was taking only insulin therapy (DIQ050, DID060, DIQ070)
@@ -498,14 +498,10 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
     ),
     
     # T1D flag: diabetes==1 & DID040<30 & ONLY insulin (DIQ050==1 AND DID060 in 1:49 AND DIQ070==2)
-    t1d_core = case_when(
-      diabetes == 1L &
-        !is.na(DID040) & DID040 < 30 &
-        DIQ050 == 1L & DIQ070 == 2L &
-        DID060 %in% 1:49 ~ TRUE,
-      TRUE ~ FALSE
-    ),
-    T1D_flag = if_else(t1d_core, 1L, 0L),  
+    T1D_flag <- case_when(
+      diabetes == 1L & DID040 <30 & DIQ050 == 1L & DIQ070 == 2L & DID060 %in% 1:49 ~ 1L,
+      TRUE ~ 0L
+    ),  
     
     # T2D: diabetes==1 AND T1D_flag==0L (NOT T1D) AND RHQ162==2 | DIQ175S==28 (NOT gestational diabetes)
     T2D = case_when(
