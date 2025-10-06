@@ -127,6 +127,7 @@ glimpse(dsd_0518)
 demo_health_0518 <- demo_health_0518 %>%
   left_join(dsd_0518, by = "SEQN")
 glimpse(demo_health_0518)
+
 ```
 
 ## Dietary index calculation
