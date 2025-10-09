@@ -14,6 +14,7 @@ editor_options:
 ```{r}
 #| label: load packages
 #| include: false             #this chunk is not included in the report
+setwd("/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/CODE/Diet score")
 library(dplyr)
 library(DataExplorer)
 library(knitr)
@@ -25,6 +26,8 @@ library(foreign)
 library(readr)
 library(purrr)
 library(dietaryindex)
+library(writexl)
+library(nhanesA)
 ```
 
 ## Download & merge health variables
@@ -59,7 +62,7 @@ hdl_cols    <- c("LBDHDD")
 smq_cols    <- c("SMQ020","SMQ040")      # smoking 
 alq_cols    <- c("ALQ130")               # alcohol drinks/day (12 mo)
 paq_cols    <- c("PAQ670","PAD675")      # days/wk * minutes/day 
-dsd_cols    <- c("DSD010")               # vitamin/mineral supplement use
+#dsd_cols    <- c("DSD010")               # vitamin/mineral supplement use
 rhq_cols    <- c("RHQ162")               # gestational diabetes
 
 # Download and merge all health-related files for each cycle
@@ -128,11 +131,14 @@ demo_health_0518 <- demo_health_0518 %>%
   left_join(dsd_0518, by = "SEQN")
 glimpse(demo_health_0518)
 
+# save data
+# write_xlsx()
 ```
 
 ## Dietary index calculation
 
 ```{r}
+### Prepare dataset ###
 # Set base_path folder 
 BASE <- "/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/DATA"
 
@@ -153,21 +159,22 @@ for (i in seq_along(cycles)) {
   nutr_dir <- file.path(BASE, "NUTRIENT", paste0("NUTRIENT_", cyc))
   demo_dir <- file.path(BASE, "DEMO",     paste0("DEMO_", cyc))
   
-  # Read 9 expected tables for the cycle 
+  # Read 9 expected tables for the cycle
+  # FPED: day 1/2 total; NUTRIENT: day 1/2 total; NUTRIENT_IND/FPED_IND: individual foods
   cycle_list <- list(
     DEMO          = read_xpt(file.path(demo_dir, sprintf("DEMO_%s.xpt", let))),             
     
-    FPED          = read_sas(file.path(fped_dir, sprintf("fped_dr1tot_%s.sas7bdat", cyc))), # FPED day 1 totals
-    NUTRIENT      = read_xpt(file.path(nutr_dir, sprintf("DR1TOT_%s.xpt", let))),           # NUT day 1 totals
+    FPED          = read_sas(file.path(fped_dir, sprintf("fped_dr1tot_%s.sas7bdat", cyc))), 
+    NUTRIENT      = read_xpt(file.path(nutr_dir, sprintf("DR1TOT_%s.xpt", let))),          
     
-    FPED2         = read_sas(file.path(fped_dir, sprintf("fped_dr2tot_%s.sas7bdat", cyc))), # FPED day 2 totals
-    NUTRIENT2     = read_xpt(file.path(nutr_dir, sprintf("DR2TOT_%s.xpt", let))),           # NUT day 2 totals
+    FPED2         = read_sas(file.path(fped_dir, sprintf("fped_dr2tot_%s.sas7bdat", cyc))), 
+    NUTRIENT2     = read_xpt(file.path(nutr_dir, sprintf("DR2TOT_%s.xpt", let))),          
     
-    NUTRIENT_IND  = read_xpt(file.path(nutr_dir, sprintf("DR1IFF_%s.xpt", let))),           # NUT day 1 individual foods
-    FPED_IND      = read_sas(file.path(fped_dir, sprintf("fped_dr1iff_%s.sas7bdat", cyc))), # FPED day 1 individual foods
+    NUTRIENT_IND  = read_xpt(file.path(nutr_dir, sprintf("DR1IFF_%s.xpt", let))),           
+    FPED_IND      = read_sas(file.path(fped_dir, sprintf("fped_dr1iff_%s.sas7bdat", cyc))), 
     
-    FPED_IND2     = read_sas(file.path(fped_dir, sprintf("fped_dr2iff_%s.sas7bdat", cyc))), # FPED day 2 individual foods
-    NUTRIENT_IND2 = read_xpt(file.path(nutr_dir, sprintf("DR2IFF_%s.xpt", let)))            # NUT day 2 individual foods
+    FPED_IND2     = read_sas(file.path(fped_dir, sprintf("fped_dr2iff_%s.sas7bdat", cyc))), 
+    NUTRIENT_IND2 = read_xpt(file.path(nutr_dir, sprintf("DR2IFF_%s.xpt", let)))            
   )
   
   # Save this cycle into the outer list, named by its code (e.g., "1718")
@@ -250,9 +257,9 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
 #View(DII_0518)
 
 # ---------- PHDI ----------
-# prepare data 
+# prepare data (PHDI function requires SERV_DATA=FPED_NUTRIENT_DEMO in a dataset) 
 # DR1TKCAL: Energy (kcal) - Dietary Interview - Total Nutrient Intakes, First Day
-# DR1DRSTZ == 1 OR DR2DRSTZ == 1: Dietary recall status
+# Dietary recall status: DR1DRSTZ == 1 OR DR2DRSTZ == 1 (Reliable and met the minimum criteria) 
 FPED_NUTRIENT_DEMO_1718 <- reduce(
   list(
   NHANES_ALL[["1718"]]$DEMO, 
@@ -271,7 +278,7 @@ for (cyc in cycles) {
   df_merged <- reduce(                            # merge the tables in the list one by one
     list(
     df$DEMO,
-    df$NUTRIENT %>% select(SEQN, DR1TKCAL, DR1DRSTZ),
+    df$NUTRIENT %>% select(SEQN, DR1TKCAL, DR1DRSTZ),   #doulbe-check DR1DRSTZ/DR2DRSTZ
     df$NUTRIENT2 %>% select(SEQN, DR2TKCAL, DR2DRSTZ),
     df$FPED,
     df$FPED2),
@@ -337,15 +344,16 @@ PHDI_0518_d2 <- map_dfr(cycles, function(cyc) {
 
 # Average PHDI (PHDI_0518 <- (PHDI_0518_d1 + PHDI_0518_d2)/2)
 # merge PHDI day 1 + day 2
-PHDI_0518_mean <- full_join(
+PHDI_0518_d1_d2 <- full_join(
   PHDI_0518_d1,
   PHDI_0518_d2,
-  by = c("RESPONDENTID", "GENDER"),
+  by = c("RESPONDENTID", "GENDER", "cycle"),
   suffix = c("_d1", "_d2")
 ) 
 
-# List of 'PHDI_' vars 
-phdi_vars <- grep("^PHDI_", names(PHDI_0518_d1), value = TRUE)
+# List of 'PHDI_' vars (filter list of vars started as "PHDI...") 
+phdi_vars <- grep("^PHDI_", names(PHDI_0518_d1), value = TRUE) 
+phdi_vars <- c(phdi_vars, "TOTALKCAL_PHDI")
 
 # Loop to compute mean each var PHDI_
 for (v in phdi_vars) {
@@ -353,14 +361,19 @@ for (v in phdi_vars) {
   v_d2 <- paste0(v, "_d2")
   v_mean <- paste0(v, "_mean")
   
-  PHDI_0518_mean[[v_mean]] <- rowMeans(
-    cbind(PHDI_0518_mean[[v_d1]], PHDI_0518_mean[[v_d2]]),
+  PHDI_0518_d1_d2[[v_mean]] <- rowMeans(
+    cbind(PHDI_0518_d1_d2[[v_d1]], PHDI_0518_d1_d2[[v_d2]]),
     na.rm = TRUE
   )
 }
 
-PHDI_0518_mean <- PHDI_0518_mean %>%
-  select(RESPONDENTID, GENDER, ends_with("_mean"))
+glimpse(PHDI_0518_d1_d2)
+
+PHDI_0518_mean <- PHDI_0518_d1_d2 %>%
+  select(RESPONDENTID, GENDER, cycle, ends_with("_mean")) %>%
+  rename(SEQN = RESPONDENTID)
+
+glimpse(PHDI_0518_mean)
 ```
 
 ## Mortality data
@@ -377,7 +390,7 @@ cyc_years <- c(
   "1718" = "2017_2018"
 )
 
-# Function to read mortality
+# Function to read mortality data
 read_mort <- function(dir, cyc) {
   yrs  <- cyc_years[[cyc]]
   path <- file.path(dir, paste0("NHANES_", yrs, "_MORT_2019_PUBLIC.dat"))
@@ -408,6 +421,12 @@ mort_0518 <- do.call(
   lapply(cycles, function(cyc) read_mort(MORT_DIR, cyc))
 )
 #View(mort_0518)
+```
+
+## Greenhouse Gas (GHG) data
+
+```{r}
+
 ```
 
 ## Merge data
