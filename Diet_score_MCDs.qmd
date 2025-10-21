@@ -7,9 +7,7 @@ editor_options:
   chunk_output_type: console
 ---
 
-# Merge data
-
-## Load packages
+# Load packages
 
 ```{r}
 #| label: load packages
@@ -42,7 +40,7 @@ library(visdat)
 library(skimr)     # skim for quick summary
 ```
 
-## Functions
+# Functions
 
 ```{r}
 # A function to average the day 1 and day 2 data
@@ -105,7 +103,9 @@ gt_cov_2col <- function(data, vars, digits = 1, title = NULL) {
 }
 ```
 
-## Download & merge health variables
+# Data preprocessing
+
+## Demo & health variables
 
 ```{r}
 years   <- c("2005","2007","2009","2011","2013","2015","2017")
@@ -210,7 +210,7 @@ glimpse(demo_health_0518)
 # write_xlsx()
 ```
 
-## Dietary index calculation
+## Dietary index variables
 
 ```{r}
 ### Prepare dataset ###
@@ -280,7 +280,7 @@ HEI2020_0518 <- map_dfr(cycles, function(cyc) {
 #View(HEI2020_0518)
 ```
 
-### AHEI 
+### AHEI
 
 ```{r}
 # ---------- AHEI ----------
@@ -359,84 +359,130 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
 # prepare data (PHDI function requires SERV_DATA=FPED_NUTRIENT_DEMO in a dataset) 
 # DR1TKCAL: Energy (kcal) - Dietary Interview - Total Nutrient Intakes, First Day
 # Dietary recall status: DR1DRSTZ == 1 OR DR2DRSTZ == 1 (Reliable and met the minimum criteria) 
-FPED_NUTRIENT_DEMO_1718 <- reduce(
-  list(
-  NHANES_ALL[["1718"]]$DEMO, 
-  NHANES_ALL[["1718"]]$NUTRIENT %>% select(SEQN, DR1TKCAL, DR1DRSTZ),
-  NHANES_ALL[["1718"]]$NUTRIENT2 %>% select(SEQN, DR2TKCAL, DR2DRSTZ),
-  NHANES_ALL[["1718"]]$FPED,
-  NHANES_ALL[["1718"]]$FPED2),
-  ~ left_join(.x, .y, by = "SEQN")
-  ) # merge the tables in the list one by one
 
+# --------- link the food pattern data for each NHANES individual with their nutrient and demographic data ---------
+# import food pattern (unit grams/day)
+
+# set working directory
+setwd("/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/CODE/R script/PHDI. calculation step 1-8/Step 7. Create averaged FPED files for each NHANES cycle/Input")
+
+# Read in the data
+# FPED file (food pattern variable files)
+## 2017-2018
+FPED_DR1TOT_gram_1718_d1 = read_csv("FPED_DR1TOT_gram_1718_d1.csv")
+FPED_DR1TOT_gram_1718_d2 = read_csv("FPED_DR1TOT_gram_1718_d2.csv")
+## 2015-2016
+FPED_DR1TOT_gram_1516_d1 = read_csv("FPED_DR1TOT_gram_1516_d1.csv")
+FPED_DR1TOT_gram_1516_d2 = read_csv("FPED_DR1TOT_gram_1516_d2.csv")
+## 2013-2014
+FPED_DR1TOT_gram_1314_d1 = read_csv("FPED_DR1TOT_gram_1314_d1.csv")
+FPED_DR1TOT_gram_1314_d2 = read_csv("FPED_DR1TOT_gram_1314_d2.csv")
+## 2011-2012
+FPED_DR1TOT_gram_1112_d1 = read_csv("FPED_DR1TOT_gram_1112_d1.csv")
+FPED_DR1TOT_gram_1112_d2 = read_csv("FPED_DR1TOT_gram_1112_d2.csv")
+## 2009-2010
+FPED_DR1TOT_gram_0910_d1 = read_csv("FPED_DR1TOT_gram_0910_d1.csv")
+FPED_DR1TOT_gram_0910_d2 = read_csv("FPED_DR1TOT_gram_0910_d2.csv")
+## 2007-2008
+FPED_DR1TOT_gram_0708_d1 = read_csv("FPED_DR1TOT_gram_0708_d1.csv")
+FPED_DR1TOT_gram_0708_d2 = read_csv("FPED_DR1TOT_gram_0708_d2.csv")
+## 2005-2006
+FPED_DR1TOT_gram_0506_d1 = read_csv("FPED_DR1TOT_gram_0506_d1.csv")
+FPED_DR1TOT_gram_0506_d2 = read_csv("FPED_DR1TOT_gram_0506_d2.csv")
+
+## Nutrient file (with calorie information)
 cycles <- c("0506","0708","0910","1112","1314","1516","1718")
 
-FPED_NUTRIENT_DEMO_list <- list ()
+NUTRIENT_DEMO_list <- list ()
 for (cyc in cycles) {
   df <- NHANES_ALL[[cyc]]
   df_merged <- reduce(                            # merge the tables in the list one by one
     list(
     df$DEMO,
     df$NUTRIENT %>% select(SEQN, DR1TKCAL, DR1DRSTZ),   #doulbe-check DR1DRSTZ/DR2DRSTZ
-    df$NUTRIENT2 %>% select(SEQN, DR2TKCAL, DR2DRSTZ),
-    df$FPED,
-    df$FPED2),
+    df$NUTRIENT2 %>% select(SEQN, DR2TKCAL, DR2DRSTZ)),
   ~ left_join(.x, .y, by = "SEQN"))
-  FPED_NUTRIENT_DEMO_list[[cyc]] <- df_merged
+  NUTRIENT_DEMO_list[[cyc]] <- df_merged
 }
+
+FPED_NUTRIENT_DEMO_list_d1 <- left_join (NUTRIENT_DEMO_list[[0506]], FPED_DR1TOT_gram_0506_d1 , by = "SEQN")
+FPED_NUTRIENT_DEMO_list_d2 <- left_join (NUTRIENT_DEMO_list[[0506]], FPED_DR1TOT_gram_0506_d2 , by = "SEQN")
+
+# Create list to save data
+FPED_NUTRIENT_DEMO_list_d1 <- list()
+FPED_NUTRIENT_DEMO_list_d2 <- list()
+
+# loop for merging data
+for (cyc in cycles) {
+
+  # lấy dữ liệu DEMO+NUTRIENT từ list
+  demo_data <- NUTRIENT_DEMO_list[[cyc]]
+
+  # lấy dữ liệu FPED tương ứng theo tên biến
+  fped_d1 <- get(paste0("FPED_DR1TOT_gram_", cyc, "_d1"))
+  fped_d2 <- get(paste0("FPED_DR1TOT_gram_", cyc, "_d2"))
+
+  # ghép: giữ toàn bộ hàng trong DEMO (left join)
+  FPED_NUTRIENT_DEMO_list_d1[[cyc]] <- left_join(demo_data, fped_d1, by = "SEQN")
+  FPED_NUTRIENT_DEMO_list_d2[[cyc]] <- left_join(demo_data, fped_d2, by = "SEQN")
+}
+
+# tibble 
+FPED_NUTRIENT_DEMO_list_d1[["1516"]] %>% glimpse()
 
 #FPED_NUTRIENT_DEMO_0518_d1 <- bind_rows(FPED_NUTRIENT_DEMO_d1_list)
 
+# ------------------ Calculate PHDI ------------------------------------------
 # PHDI day 1
 PHDI_0518_d1 <- map_dfr(cycles, function(cyc) {
-  dat <- FPED_NUTRIENT_DEMO_list[[cyc]]
+  dat <- FPED_NUTRIENT_DEMO_list_d1[[cyc]]
   out <- PHDI_V2(
     SERV_DATA = dat,
     RESPONDENTID = dat$SEQN,
-    GENDER = dat$RIAGENDR.x, # check RIAGENDR 
+    GENDER = dat$RIAGENDR, # check RIAGENDR 
     TOTALKCAL_PHDI = dat$DR1TKCAL,
-    WGRAIN_SERV_PHDI = dat$DR1T_G_WHOLE,
-    STARCHY_VEG_SERV_PHDI = dat$DR1T_V_STARCHY_TOTAL,
-    VEG_SERV_PHDI = dat$DR1T_V_STARCHY_OTHER,
-    FRT_SERV_PHDI = dat$DR1T_F_TOTAL,
-    DAIRY_SERV_PHDI = dat$DR1T_D_TOTAL,
-    REDPROC_MEAT_SERV_PHDI = dat$DR1T_PF_MEAT,
-    POULTRY_SERV_PHDI = dat$DR1T_PF_POULT,
-    EGG_SERV_PHDI = dat$DR1T_PF_EGGS,
-    FISH_SERV_PHDI = dat$DR1T_PF_SEAFD_HI, # phải cộng DR2T_PF_SEAFD_LOW & _HI? -> total
-    NUTS_SERV_PHDI = dat$DR1T_PF_NUTSDS,
-    LEGUMES_SERV_PHDI = dat$DR1T_PF_LEGUMES,
-    SOY_SERV_PHDI = dat$DR1T_PF_SOY,
-    ADDED_FAT_UNSAT_SERV_PHDI = dat$DR1T_OILS,
-    ADDED_FAT_SAT_TRANS_SERV_PHDI = dat$DR1T_SOLID_FATS,
-    ADDED_SUGAR_SERV_PHDI = dat$DR1T_ADD_SUGARS
+    WGRAIN_SERV_PHDI = dat$F_WHOLE_gram, 
+    STARCHY_VEG_SERV_PHDI = dat$V_STARCHY_TOTAL_gram, 
+    VEG_SERV_PHDI = dat$V_TOTAL_NONSTARCHY_gram, 
+    FRT_SERV_PHDI = dat$F_WHOLE_gram, 
+    DAIRY_SERV_PHDI = dat$D_TOTAL_gram, 
+    REDPROC_MEAT_SERV_PHDI = dat$PF_REDMEAT_gram, 
+    POULTRY_SERV_PHDI = dat$PF_POULT_gram, 
+    EGG_SERV_PHDI = dat$PF_EGGS_gram, 
+    FISH_SERV_PHDI = dat$PF_SEAFD_TOTAL_gram, 
+    NUTS_SERV_PHDI = dat$PF_NUTSDS_gram, 
+    LEGUMES_SERV_PHDI = dat$PF_LEGUMES_gram, 
+    SOY_SERV_PHDI = dat$PF_SOY_gram, 
+    ADDED_FAT_UNSAT_SERV_PHDI = dat$OILS_gram, 
+    ADDED_FAT_SAT_TRANS_SERV_PHDI = dat$SOLID_FATS, 
+    ADDED_SUGAR_SERV_PHDI = dat$ADD_SUGARS_gram
   )
   mutate(out, cycle = cyc)
 })
 
 # PHDI day 2
 PHDI_0518_d2 <- map_dfr(cycles, function(cyc) {
-  dat <- FPED_NUTRIENT_DEMO_list[[cyc]]
+  dat <- FPED_NUTRIENT_DEMO_list_d2[[cyc]]
   out <- PHDI_V2(
     SERV_DATA = dat,
     RESPONDENTID = dat$SEQN,
-    GENDER = dat$RIAGENDR.x,
+    GENDER = dat$RIAGENDR,
     TOTALKCAL_PHDI = dat$DR2TKCAL,
-    WGRAIN_SERV_PHDI = dat$DR2T_G_WHOLE,
-    STARCHY_VEG_SERV_PHDI = dat$DR2T_V_STARCHY_TOTAL,
-    VEG_SERV_PHDI = dat$DR2T_V_STARCHY_OTHER,
-    FRT_SERV_PHDI = dat$DR2T_F_TOTAL,
-    DAIRY_SERV_PHDI = dat$DR2T_D_TOTAL,
-    REDPROC_MEAT_SERV_PHDI = dat$DR2T_PF_MEAT,
-    POULTRY_SERV_PHDI = dat$DR2T_PF_POULT,
-    EGG_SERV_PHDI = dat$DR2T_PF_EGGS,
-    FISH_SERV_PHDI = dat$DR2T_PF_SEAFD_HI, # check where is total_seafood?
-    NUTS_SERV_PHDI = dat$DR2T_PF_NUTSDS,
-    LEGUMES_SERV_PHDI = dat$DR2T_PF_LEGUMES,
-    SOY_SERV_PHDI = dat$DR2T_PF_SOY,
-    ADDED_FAT_UNSAT_SERV_PHDI = dat$DR2T_OILS,
-    ADDED_FAT_SAT_TRANS_SERV_PHDI = dat$DR2T_SOLID_FATS,
-    ADDED_SUGAR_SERV_PHDI = dat$DR2T_ADD_SUGARS
+    WGRAIN_SERV_PHDI = dat$F_WHOLE_gram, 
+    STARCHY_VEG_SERV_PHDI = dat$V_STARCHY_TOTAL_gram, 
+    VEG_SERV_PHDI = dat$V_TOTAL_NONSTARCHY_gram, 
+    FRT_SERV_PHDI = dat$F_WHOLE_gram, 
+    DAIRY_SERV_PHDI = dat$D_TOTAL_gram, 
+    REDPROC_MEAT_SERV_PHDI = dat$PF_REDMEAT_gram, 
+    POULTRY_SERV_PHDI = dat$PF_POULT_gram, 
+    EGG_SERV_PHDI = dat$PF_EGGS_gram, 
+    FISH_SERV_PHDI = dat$PF_SEAFD_TOTAL_gram, 
+    NUTS_SERV_PHDI = dat$PF_NUTSDS_gram, 
+    LEGUMES_SERV_PHDI = dat$PF_LEGUMES_gram, 
+    SOY_SERV_PHDI = dat$PF_SOY_gram, 
+    ADDED_FAT_UNSAT_SERV_PHDI = dat$OILS_gram, 
+    ADDED_FAT_SAT_TRANS_SERV_PHDI = dat$SOLID_FATS, 
+    ADDED_SUGAR_SERV_PHDI = dat$ADD_SUGARS_gram
   )
   mutate(out, cycle = cyc)
 })
@@ -475,7 +521,7 @@ PHDI_0518_mean <- PHDI_0518_d1_d2 %>%
 glimpse(PHDI_0518_mean)
 ```
 
-## Mortality data
+## Mortality variables
 
 ```{r}
 # Map cycle 
@@ -522,7 +568,7 @@ mort_0518 <- do.call(
 #View(mort_0518)
 ```
 
-## Greenhouse Gas (GHG) data
+## Greenhouse gas variable
 
 ```{r}
 # Use only the dietary recall that is reliable and met the minimum criteria in NHANES-DR1DRSTZ ==1 OR DR2DRSTZ == 1 (James applied)
@@ -556,7 +602,7 @@ for (cyc in cycles) {
 }
 
 glimpse(GHG_0518)
-
+View(GHG_0518)
 GHG_DR1TOT_gram_1718_d1 = read_csv("GHG_DR1TOT_gram_1718.csv")
 GHG_DR1TOT_gram_1718_d2 = read_csv("GHG_DR2TOT_gram_1718.csv")
 GHG_DR1TOT_gram_1516_d1 = read_csv("GHG_DR1TOT_gram_1516.csv")
@@ -582,7 +628,7 @@ GHG_0708_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0708_d1, GHG_DR1TOT_gram_070
 GHG_0506_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0506_d1, GHG_DR1TOT_gram_0506_d2, identifier = "SEQN")
 ```
 
-## Merge data
+## Merging all data
 
 ```{r}
 by_keys <- c("SEQN","cycle")
@@ -613,9 +659,11 @@ glimpse(nhanes_merged_0518)
 #View(nhanes_merged_0518)
 ```
 
-# MCD definition
+# Data cleaning 
 
-## Major cardiovascular disease (M_CVD)
+## Major chronic disease (MCD) (combined variable)
+
+### Major cardiovascular disease (M_CVD)
 
 ```{r}
 ### Major cardiovascular disease (M_CVD: having at least 1 disease = 1; all of these conditions are reported as “No” = 0; 
@@ -648,7 +696,7 @@ nhanes_merged_0518$M_CVD <- apply(
 )
 ```
 
-## Type 2 diabetes
+### Type 2 diabetes
 
 ```{r}
 ## Total diabetes = Diagnosed diabetes - self-reported diabetes (DIQ010 == 1) 
@@ -689,7 +737,7 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
   ) #Note: If exclude pregnant women from the beginning, code should be refined
 ```
 
-## Cancer
+### Cancer
 
 ```{r}
 # Recode: 1 = Yes, 2 = No, 7/9/. = NA
@@ -703,7 +751,7 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
   )
 ```
 
-## Major chronic disease (combined variable) (MCD)
+### MCD variable
 
 ```{r}
 nhanes_merged_0518 <- nhanes_merged_0518 %>%
@@ -791,7 +839,7 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
 #View(nhanes_merged_0518)
 ```
 
-# Covariates
+## Covariates
 
 ```{r}
 nhanes_merged_0518 <- nhanes_merged_0518 %>%
@@ -911,7 +959,7 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
   )
 ```
 
-# Exclusion criteria
+## Exclusion criteria
 
 ```{r}
 # participants with unreliable dietary recall as defined by NHANES: DR1DRSTZ == 1 OR DR2DRSTZ == 1 (Reliable and met the minimum criteria - Dietary recall status)
@@ -939,7 +987,7 @@ glimpse(nhanes_merged_0518_filtered)
 # Rows: 27,306
 ```
 
-# Missing patterns
+## Missing patterns
 
 ```{r}
 # overview
