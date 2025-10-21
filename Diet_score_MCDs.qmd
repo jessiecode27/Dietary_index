@@ -28,6 +28,81 @@ library(purrr)
 library(dietaryindex)
 library(writexl)
 library(nhanesA)
+library(naniar)
+library(VIM)
+library(gridExtra)
+library(scales)
+library(gt)
+library(tidyverse)
+library(naniar)    # missing summaries 
+library(mice)      # md.pattern, missing clustering
+library(janitor)   
+library(UpSetR)    # upset plot cho pattern
+library(visdat)    
+library(skimr)     # skim for quick summary
+```
+
+## Functions
+
+```{r}
+# A function to average the day 1 and day 2 data
+NHANES_d1d2_average = function(COHORT1, COHORT2, identifier){
+    # Check which columns exist in both COHORT and COHORT2
+    common_cols <- intersect(colnames(COHORT1), colnames(COHORT2))
+
+    # Remove 'SEQN' as it is the joining key, not an average-able variable
+    common_cols <- setdiff(common_cols, identifier)
+
+    # Dynamically generate the mutate expressions for averaging the common columns between the two data sets
+    avg_exprs <- setNames(lapply(common_cols, function(col) {
+        rlang::parse_expr(paste0(col, " = (", col, ".x + ", col, ".y) / 2"))
+    }), common_cols)
+
+    # Perform inner join to merge the two data sets
+    COHORT12 <- inner_join(COHORT1, COHORT2, by = identifier)
+
+    # Perform the averaging calculations
+    COHORT12 <- COHORT12 %>%
+        mutate(!!!avg_exprs)
+
+    # Explicitly select the columns of interest
+    COHORT12 <- COHORT12 %>%
+        dplyr::select(identifier, !!!common_cols)
+    
+    # Return the averaged data set
+    return(COHORT12)
+}
+
+# A funtion for tab table (n, %, included NA)
+gt_cov_2col <- function(data, vars, digits = 1, title = NULL) {
+  stopifnot(is.data.frame(data), is.character(vars))
+  
+  tab <- map_dfr(vars, function(v) {
+    x <- data[[v]]
+    if (is.null(x)) stop(sprintf("Variable '%s' not found in data.", v))
+    n_total <- length(x)
+    
+    df <- tibble(level_chr = as.character(x), is_na = is.na(x)) %>%
+      mutate(level_chr = ifelse(is_na, "NA", level_chr)) %>%
+      count(level_chr, is_na, name = "n") %>%
+      arrange(is_na, desc(n)) %>%
+      mutate(
+        variable = v,
+        percent  = 100 * n / n_total
+      ) %>%
+      transmute(variable, level = level_chr, n, percent)
+  })
+  
+  tab %>%
+    gt(groupname_col = "variable") %>%
+    cols_label(
+      level   = "Level",
+      n       = md("**n**"),
+      percent = md("**%**")
+    ) %>%
+    fmt_number(columns = percent, decimals = digits) %>%
+    tab_options(table.font.size = px(12), data_row.padding = px(4))
+}
 ```
 
 ## Download & merge health variables
@@ -183,7 +258,11 @@ for (i in seq_along(cycles)) {
 
 ### Use dietary package ###
 cycles <- c("0506","0708","0910","1112","1314","1516","1718")
+```
 
+### HEI2020
+
+```{r}
 # map_dfr() loops through each cycle, runs the function() inside,then automatically bind_rows() the results of all cycles into a final df 
 # ---------- HEI2020 ----------
 HEI2020_0518 <- map_dfr(cycles, function(cyc) { 
@@ -199,7 +278,11 @@ HEI2020_0518 <- map_dfr(cycles, function(cyc) {
 })
 
 #View(HEI2020_0518)
+```
 
+### AHEI 
+
+```{r}
 # ---------- AHEI ----------
 AHEI_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
@@ -213,7 +296,11 @@ AHEI_0518 <- map_dfr(cycles, function(cyc) {
 })
 
 #View(AHEI_0518)
+```
 
+### DASH
+
+```{r}
 # ---------- DASH ----------
 DASH_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
@@ -227,7 +314,11 @@ DASH_0518 <- map_dfr(cycles, function(cyc) {
 })
 
 #View(DASH_0518)
+```
 
+### aMED
+
+```{r}
 # ---------- aMED ----------
 AMED_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
@@ -241,7 +332,11 @@ AMED_0518 <- map_dfr(cycles, function(cyc) {
   mutate(out, cycle = cyc)
 })
 #View(AMED_0518)
+```
 
+### DII
+
+```{r}
 # ---------- DII ----------
 DII_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
@@ -255,7 +350,11 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
   mutate(out, cycle = cyc)
 })
 #View(DII_0518)
+```
 
+### PHDI
+
+```{r}
 # ---------- PHDI ----------
 # prepare data (PHDI function requires SERV_DATA=FPED_NUTRIENT_DEMO in a dataset) 
 # DR1TKCAL: Energy (kcal) - Dietary Interview - Total Nutrient Intakes, First Day
@@ -304,7 +403,7 @@ PHDI_0518_d1 <- map_dfr(cycles, function(cyc) {
     REDPROC_MEAT_SERV_PHDI = dat$DR1T_PF_MEAT,
     POULTRY_SERV_PHDI = dat$DR1T_PF_POULT,
     EGG_SERV_PHDI = dat$DR1T_PF_EGGS,
-    FISH_SERV_PHDI = dat$DR1T_PF_SEAFD_HI, # check where is total_seafood?
+    FISH_SERV_PHDI = dat$DR1T_PF_SEAFD_HI, # phải cộng DR2T_PF_SEAFD_LOW & _HI? -> total
     NUTS_SERV_PHDI = dat$DR1T_PF_NUTSDS,
     LEGUMES_SERV_PHDI = dat$DR1T_PF_LEGUMES,
     SOY_SERV_PHDI = dat$DR1T_PF_SOY,
@@ -426,7 +525,61 @@ mort_0518 <- do.call(
 ## Greenhouse Gas (GHG) data
 
 ```{r}
+# Use only the dietary recall that is reliable and met the minimum criteria in NHANES-DR1DRSTZ ==1 OR DR2DRSTZ == 1 (James applied)
+# import GHG day 1 and day 2 data
+# Set base_path folder 
+BASE <- "/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/Documents/PHDI-GHG paper/GHG_PHDI_merging/Step 2/Input/GHG"
 
+cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
+
+# create a blank frame
+GHG_0518 <- data.frame()
+
+# loop: import data + average day1-day2
+for (cyc in cycles) {
+  # build file paths
+  d1_path <- file.path (BASE, paste0("GHG_DR1TOT_gram_", cyc, ".csv"))
+  d2_path <- file.path (BASE, paste0("GHG_DR2TOT_gram_", cyc, ".csv"))
+  
+  # import data
+  d1 <- read_csv(d1_path)
+  d2 <- read_csv(d2_path)
+  
+  # Average day1–day2
+  avg <- NHANES_d1d2_average(d1, d2, identifier = "SEQN")
+  
+  # Add cycle label
+  avg <- avg %>% mutate(cycle = cyc)
+  
+  # combined dataset
+  GHG_0518 <- bind_rows(GHG_0518, avg)
+}
+
+glimpse(GHG_0518)
+
+GHG_DR1TOT_gram_1718_d1 = read_csv("GHG_DR1TOT_gram_1718.csv")
+GHG_DR1TOT_gram_1718_d2 = read_csv("GHG_DR2TOT_gram_1718.csv")
+GHG_DR1TOT_gram_1516_d1 = read_csv("GHG_DR1TOT_gram_1516.csv")
+GHG_DR1TOT_gram_1516_d2 = read_csv("GHG_DR2TOT_gram_1516.csv")
+GHG_DR1TOT_gram_1314_d1 = read_csv("GHG_DR1TOT_gram_1314.csv")
+GHG_DR1TOT_gram_1314_d2 = read_csv("GHG_DR2TOT_gram_1314.csv")
+GHG_DR1TOT_gram_1112_d1 = read_csv("GHG_DR1TOT_gram_1112.csv")
+GHG_DR1TOT_gram_1112_d2 = read_csv("GHG_DR2TOT_gram_1112.csv")
+GHG_DR1TOT_gram_0910_d1 = read_csv("GHG_DR1TOT_gram_0910.csv")
+GHG_DR1TOT_gram_0910_d2 = read_csv("GHG_DR2TOT_gram_0910.csv")
+GHG_DR1TOT_gram_0708_d1 = read_csv("GHG_DR1TOT_gram_0708.csv")
+GHG_DR1TOT_gram_0708_d2 = read_csv("GHG_DR2TOT_gram_0708.csv")
+GHG_DR1TOT_gram_0506_d1 = read_csv("GHG_DR1TOT_gram_0506.csv")
+GHG_DR1TOT_gram_0506_d2 = read_csv("GHG_DR2TOT_gram_0506.csv")
+
+# Merge the day 1 and day 2 data for each cohort
+GHG_1718_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1718_d1, GHG_DR1TOT_gram_1718_d2, identifier = "SEQN")
+GHG_1516_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1516_d1, GHG_DR1TOT_gram_1516_d2, identifier = "SEQN")
+GHG_1314_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1314_d1, GHG_DR1TOT_gram_1314_d2, identifier = "SEQN")
+GHG_1112_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1112_d1, GHG_DR1TOT_gram_1112_d2, identifier = "SEQN")
+GHG_0910_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0910_d1, GHG_DR1TOT_gram_0910_d2, identifier = "SEQN")
+GHG_0708_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0708_d1, GHG_DR1TOT_gram_0708_d2, identifier = "SEQN")
+GHG_0506_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0506_d1, GHG_DR1TOT_gram_0506_d2, identifier = "SEQN")
 ```
 
 ## Merge data
@@ -440,7 +593,7 @@ left_join_drop_dups <- function(x, y, by) {
   left_join(x, y_sel, by = by)
 }
 
-# HEALTH -> (HEI, AHEI, DASH, aMED, DII, PHDI_mean) -> MORT
+# HEALTH -> (HEI, AHEI, DASH, aMED, DII, PHDI_mean) -> MORT -> GHG_0518
 nhanes_merged_0518 <- Reduce(
   function(x, y) left_join_drop_dups(x, y, by = by_keys),
   list(
@@ -451,7 +604,8 @@ nhanes_merged_0518 <- Reduce(
     AMED_0518,
     DII_0518,
     PHDI_0518_mean,
-    mort_0518
+    mort_0518, 
+    GHG_0518
   )
 )
 
@@ -510,27 +664,27 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
     # Diabetes: DIQ010==1 OR FPG≥126 OR HbA1c≥6.5
     diabetes = case_when(
       DIQ010 == 1 | LBXGLU >= 126 | LBXGH >= 6.5 ~ 1L,
-      DIQ010 == 2 & 
-        (is.na(LBXGLU) | LBXGLU < 126) & 
-        (is.na(LBXGH) | LBXGH < 6.5) ~ 0L,
+      DIQ010 == 2 | LBXGLU < 126 | LBXGH < 6.5  ~ 0L,
       TRUE ~ NA_integer_
     ),
     
     # T1D flag: diabetes==1 & DID040<30 & ONLY insulin (DIQ050==1 AND DID060 in 1:49 AND DIQ070==2)
-    T1D_flag <- case_when(
+    T1D_flag = case_when(
       diabetes == 1L & DID040 <30 & DIQ050 == 1L & DIQ070 == 2L & DID060 %in% 1:49 ~ 1L,
       TRUE ~ 0L
     ),  
     
-    # T2D: diabetes==1 AND T1D_flag==0L (NOT T1D) AND RHQ162==2 | DIQ175S==28 (NOT gestational diabetes)
+    # T2D: diabetes==1 AND T1D_flag==0L (NOT T1D) AND RHQ162==2 | DIQ175S!==28 (NOT gestational diabetes)
     T2D = case_when(
-      diabetes == 1L & T1D_flag == 0L &
-        (RHQ162 == 2 | is.na(RHQ162)) &
-        (DIQ175S != 28 | is.na(DIQ175S)) ~ 1L,
+      diabetes == 1L & T1D_flag == 0L &  # bị ĐTĐ ko phải Type 1
+        (RHQ162 == 2 | DIQ175S != 28) # ko bị tiểu đường thai kỳ  
+      ~ 1L,
 
-      diabetes == 0L | RHQ162 == 1 | DIQ175S == 28 ~ 0L,
+      diabetes == 0L # ko bị diabetes
+      | RHQ162 == 1 | DIQ175S == 28 # bị tiểu đường thai kỳ 
+      ~ 0L,
       
-      TRUE ~ NA_integer_
+      TRUE ~ NA_integer_ 
     )
   ) #Note: If exclude pregnant women from the beginning, code should be refined
 ```
@@ -575,8 +729,6 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
 # 4. High triglycerides (mg/dL) (LBXTR): >150 
 # 5. Low HDL (HDL cholesterol (mg/dL): LBDHDD) <40 mg/dL (men), <50 mg/dL (women)
 # Gender (RIAGENDR): 1 Male, 2 Female
-
-library(dplyr)
 
 nhanes_merged_0518 <- nhanes_merged_0518 %>%
   mutate(
@@ -727,15 +879,15 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
       PAQ_MINWEEK >=150 & PAQ_MINWEEK <300   ~ 2L, # Sufficient
       PAQ_MINWEEK >=300                      ~ 3L, # Mod+vigorous
       TRUE ~ NA_integer_
-    )
+    ),
     
     # ---- Supplement use ----
-    #DSD010_CAT = case_when(
-    #  DSD010 == 1         ~ 1L,
-    #  DSD010 == 2         ~ 0L,
-    #  DSD010 %in% c(7,9)  ~ NA_integer_,
-    #  TRUE ~ NA_integer_
-    #)
+    DSD010_CAT = case_when(
+      DSD010 == 1         ~ 1L,
+      DSD010 == 2         ~ 0L,
+      DSD010 %in% c(7,9)  ~ NA_integer_,
+      TRUE ~ NA_integer_
+    )
   )
 
 ### label for covariates ###
@@ -757,6 +909,138 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
     INDFMPIR_CAT = f(INDFMPIR_CAT, 1:3, c("0–<1.30","1.30–3.49","≥3.50")),
     BMI_CAT      = f(BMI_CAT, c(2,3,4), c("Underweight or Normal Weight","Overweight","Obese"))
   )
+```
+
+# Exclusion criteria
+
+```{r}
+# participants with unreliable dietary recall as defined by NHANES: DR1DRSTZ == 1 OR DR2DRSTZ == 1 (Reliable and met the minimum criteria - Dietary recall status)
+# missing day 1 or day 2 dietary recall data:  
+# <=20 y old or missing age in years: RIDAGEYR >= 20 OR NA
+# implausible energy intake values (for females: <600 kcal/d or >3500 kcal/d, and for males: <800 kcal/d or >4200 kcal/d): DR1TKCAL; DR2TKCAL; RIAGENDR
+# DR1TKCAL; DR2TKCAL ở trên PHDI đã có ghép vào
+
+# filter 
+excluded_cols <- c("HEI2020_ALL","AHEI_ALL","DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
+                   #"M_CVD","T2D","cancer")
+health_cols <- c("CHF","CHD","Angina","MI","Stroke",
+            "M_CVD","T2D","cancer", "MCD")
+
+nhanes_merged_0518_filtered <- nhanes_merged_0518 %>%
+  filter(
+    RIDAGEYR >= 20,                                        # adults (>=20)
+    if_all(all_of(excluded_cols), ~ !is.na(.)),  # keep rows with NO missing in ALL excluded_cols
+    if_all(all_of(health_cols), ~ !is.na(.)) # keep rows with AT LEAST ONE non-missing in excluded_cols
+    # !(RIAGENDR == 2 & RIDEXPRG == 1)          # exclude women pregnant 
+  )
+
+glimpse(nhanes_merged_0518_filtered)
+# Rows: 30,883
+# Rows: 27,306
+```
+
+# Missing patterns
+
+```{r}
+# overview
+# row, column
+dim(nhanes_merged_0518_filtered)
+
+# tổng số ô, tổng số missing, % missing
+prod(dim(nhanes_merged_0518_filtered))
+sum(is.na(nhanes_merged_0518_filtered))
+total_missing / total_cells * 100
+
+# theo biến: n_miss, pct_miss, sorted desc
+miss_var <- naniar::miss_var_summary(nhanes_merged_0518_filtered) %>%
+  arrange(desc(pct_miss))
+View(miss_var)
+miss_var %>% head(30)   # top 30 biến có missing cao
+
+# theo case (mỗi row có bao nhiêu var missing)
+miss_case <- naniar::miss_case_summary(nhanes_merged_0518_filtered) %>%
+  arrange(desc(n_miss))
+miss_case %>% head(20)
+
+threshold <- 30
+vars_high_missing <- miss_var %>%
+  filter(pct_miss > threshold) %>%
+  pull(variable)
+
+length(vars_high_missing)
+vars_high_missing 
+
+####################################################
+# % missing theo biến 
+naniar::gg_miss_var(nhanes_merged_0518_filtered) +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(title = "Percent missing per variable")
+
+# số missing per case (hàng)
+naniar::gg_miss_case(nhanes_merged_0518_filtered) +
+  ggplot2::labs(title = "Missingness per observation (case)")
+
+# ma trận missing (vis_miss) nhưng dữ liệu lớn -> sample rows
+set.seed(123)
+small_sample <- nhanes_merged_0518_filtered %>% slice_sample(n = 3000) # or n = 2000
+naniar::vis_miss(small_sample, warn_large_data = FALSE)
+
+# chọn top N biến có missing nhiều nhất (vd N = 40)
+topN <- miss_var %>% slice_max(order_by = n_miss, n = 40) %>% pull(variable)
+naniar::vis_miss(nhanes_merged_0518_filtered %>% select(all_of(topN)), warn_large_data = FALSE)
+
+
+
+# check all variables
+gg_miss_var(nhanes_merged_0518_filtered, show_pct = TRUE) + # %
+  labs(y = "% missing", x = "Variables") +
+  coord_flip()
+gg_miss_var(nhanes_merged_0518) # n
+
+
+# aggr(nhanes_merged_0518_filtered, numbers = TRUE, prop = c(TRUE, FALSE))
+
+library(naniar)
+vis_miss(nhanes_merged_0518_filtered)
+
+miss_var_summary(nhanes_merged_0518_filtered) %>% print()
+gg_miss_var(nhanes_merged_0518_filtered)
+
+gg_miss_var(nhanes_merged_0518_filtered, show_pct = TRUE) + #%
+  labs(y = "% missing", x = "Variables") +
+  coord_flip()
+
+nhanes_merged_0518_filtered %>%
+  miss_var_summary() %>%
+  filter(pct_miss > 0)
+# missing plot removed all vars with no missing data
+nhanes_merged_0518_filtered %>%
+  miss_var_summary() %>%                 # -> variable, n_miss, pct_miss
+  filter(pct_miss > 0) %>%               # filtered vars with no missing 
+  ggplot(aes(x = pct_miss, y = reorder(variable, pct_miss))) +
+  geom_segment(aes(x = 0, xend = pct_miss, yend = variable), linewidth = 0.6) +
+  geom_point(size = 2) +
+  labs(x = "% missing") +
+  #theme_minimal(base_size = 12) +
+  theme(panel.grid.major.y = element_blank())
+```
+
+# Results
+
+```{r}
+### Describe table for health outcomes
+# specified vars
+covars <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F",
+            "RIAGENDR","RIDAGEYR_CAT","RIDRETH1","DMDEDUC2_CAT","DMDMARTL_CAT",
+            "INDFMPIR_CAT","BMI_CAT","OBESE","AB_OBESE","SMQ_CAT","PAQ_CAT",
+            "M_CVD","MetS","T2D","MCD")
+
+covars <- c("CHF","CHD","Angina","MI","Stroke",
+            "M_CVD","T2D","cancer", "MCD", "MetS")
+
+# table for filtered data
+health_des <- gt_cov_2col(nhanes_merged_0518_filtered, covars, digits = 1)
+health_des
 ```
 
 The `echo: false` option disables the printing of code (only output is displayed).
