@@ -405,8 +405,8 @@ for (cyc in cycles) {
   NUTRIENT_DEMO_list[[cyc]] <- df_merged
 }
 
-FPED_NUTRIENT_DEMO_list_d1 <- left_join (NUTRIENT_DEMO_list[[0506]], FPED_DR1TOT_gram_0506_d1 , by = "SEQN")
-FPED_NUTRIENT_DEMO_list_d2 <- left_join (NUTRIENT_DEMO_list[[0506]], FPED_DR1TOT_gram_0506_d2 , by = "SEQN")
+#FPED_NUTRIENT_DEMO_list_d1 <- left_join (NUTRIENT_DEMO_list[[0506]], FPED_DR1TOT_gram_0506_d1 , by = "SEQN")
+#FPED_NUTRIENT_DEMO_list_d2 <- left_join (NUTRIENT_DEMO_list[[0506]], FPED_DR1TOT_gram_0506_d2 , by = "SEQN")
 
 # Create list to save data
 FPED_NUTRIENT_DEMO_list_d1 <- list()
@@ -422,7 +422,7 @@ for (cyc in cycles) {
   fped_d1 <- get(paste0("FPED_DR1TOT_gram_", cyc, "_d1"))
   fped_d2 <- get(paste0("FPED_DR1TOT_gram_", cyc, "_d2"))
 
-  # ghép: giữ toàn bộ hàng trong DEMO (left join)
+  # ghép: giữ toàn bộ hàng trong DEMO
   FPED_NUTRIENT_DEMO_list_d1[[cyc]] <- left_join(demo_data, fped_d1, by = "SEQN")
   FPED_NUTRIENT_DEMO_list_d2[[cyc]] <- left_join(demo_data, fped_d2, by = "SEQN")
 }
@@ -602,30 +602,31 @@ for (cyc in cycles) {
 }
 
 glimpse(GHG_0518)
-View(GHG_0518)
-GHG_DR1TOT_gram_1718_d1 = read_csv("GHG_DR1TOT_gram_1718.csv")
-GHG_DR1TOT_gram_1718_d2 = read_csv("GHG_DR2TOT_gram_1718.csv")
-GHG_DR1TOT_gram_1516_d1 = read_csv("GHG_DR1TOT_gram_1516.csv")
-GHG_DR1TOT_gram_1516_d2 = read_csv("GHG_DR2TOT_gram_1516.csv")
-GHG_DR1TOT_gram_1314_d1 = read_csv("GHG_DR1TOT_gram_1314.csv")
-GHG_DR1TOT_gram_1314_d2 = read_csv("GHG_DR2TOT_gram_1314.csv")
-GHG_DR1TOT_gram_1112_d1 = read_csv("GHG_DR1TOT_gram_1112.csv")
-GHG_DR1TOT_gram_1112_d2 = read_csv("GHG_DR2TOT_gram_1112.csv")
-GHG_DR1TOT_gram_0910_d1 = read_csv("GHG_DR1TOT_gram_0910.csv")
-GHG_DR1TOT_gram_0910_d2 = read_csv("GHG_DR2TOT_gram_0910.csv")
-GHG_DR1TOT_gram_0708_d1 = read_csv("GHG_DR1TOT_gram_0708.csv")
-GHG_DR1TOT_gram_0708_d2 = read_csv("GHG_DR2TOT_gram_0708.csv")
-GHG_DR1TOT_gram_0506_d1 = read_csv("GHG_DR1TOT_gram_0506.csv")
-GHG_DR1TOT_gram_0506_d2 = read_csv("GHG_DR2TOT_gram_0506.csv")
+# View(GHG_0518)
+
+#GHG_DR1TOT_gram_1718_d1 = read_csv("GHG_DR1TOT_gram_1718.csv")
+#GHG_DR1TOT_gram_1718_d2 = read_csv("GHG_DR2TOT_gram_1718.csv")
+#GHG_DR1TOT_gram_1516_d1 = read_csv("GHG_DR1TOT_gram_1516.csv")
+#GHG_DR1TOT_gram_1516_d2 = read_csv("GHG_DR2TOT_gram_1516.csv")
+#GHG_DR1TOT_gram_1314_d1 = read_csv("GHG_DR1TOT_gram_1314.csv")
+#GHG_DR1TOT_gram_1314_d2 = read_csv("GHG_DR2TOT_gram_1314.csv")
+#GHG_DR1TOT_gram_1112_d1 = read_csv("GHG_DR1TOT_gram_1112.csv")
+#GHG_DR1TOT_gram_1112_d2 = read_csv("GHG_DR2TOT_gram_1112.csv")
+#GHG_DR1TOT_gram_0910_d1 = read_csv("GHG_DR1TOT_gram_0910.csv")
+#GHG_DR1TOT_gram_0910_d2 = read_csv("GHG_DR2TOT_gram_0910.csv")
+#GHG_DR1TOT_gram_0708_d1 = read_csv("GHG_DR1TOT_gram_0708.csv")
+#GHG_DR1TOT_gram_0708_d2 = read_csv("GHG_DR2TOT_gram_0708.csv")
+#GHG_DR1TOT_gram_0506_d1 = read_csv("GHG_DR1TOT_gram_0506.csv")
+#GHG_DR1TOT_gram_0506_d2 = read_csv("GHG_DR2TOT_gram_0506.csv")
 
 # Merge the day 1 and day 2 data for each cohort
-GHG_1718_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1718_d1, GHG_DR1TOT_gram_1718_d2, identifier = "SEQN")
-GHG_1516_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1516_d1, GHG_DR1TOT_gram_1516_d2, identifier = "SEQN")
-GHG_1314_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1314_d1, GHG_DR1TOT_gram_1314_d2, identifier = "SEQN")
-GHG_1112_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1112_d1, GHG_DR1TOT_gram_1112_d2, identifier = "SEQN")
-GHG_0910_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0910_d1, GHG_DR1TOT_gram_0910_d2, identifier = "SEQN")
-GHG_0708_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0708_d1, GHG_DR1TOT_gram_0708_d2, identifier = "SEQN")
-GHG_0506_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0506_d1, GHG_DR1TOT_gram_0506_d2, identifier = "SEQN")
+#GHG_1718_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1718_d1, GHG_DR1TOT_gram_1718_d2, identifier = "SEQN")
+#GHG_1516_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1516_d1, GHG_DR1TOT_gram_1516_d2, identifier = "SEQN")
+#GHG_1314_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1314_d1, GHG_DR1TOT_gram_1314_d2, identifier = "SEQN")
+#GHG_1112_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_1112_d1, GHG_DR1TOT_gram_1112_d2, identifier = "SEQN")
+#GHG_0910_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0910_d1, GHG_DR1TOT_gram_0910_d2, identifier = "SEQN")
+#GHG_0708_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0708_d1, GHG_DR1TOT_gram_0708_d2, identifier = "SEQN")
+#GHG_0506_d1d2 = NHANES_d1d2_average(GHG_DR1TOT_gram_0506_d1, GHG_DR1TOT_gram_0506_d2, identifier = "SEQN")
 ```
 
 ## Merging all data
@@ -659,7 +660,7 @@ glimpse(nhanes_merged_0518)
 #View(nhanes_merged_0518)
 ```
 
-# Data cleaning 
+# Data cleaning
 
 ## Major chronic disease (MCD) (combined variable)
 
