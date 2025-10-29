@@ -7,12 +7,10 @@ editor_options:
   chunk_output_type: console
 ---
 
-# Load packages
+# Setup
 
-```{r}
-#| label: load packages
-#| include: false             #this chunk is not included in the report
-setwd("/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/CODE/Diet score")
+```{r setup}
+setwd("D:/Clients/VinUni/Dr. Linh/Dietary_index")
 library(dplyr)
 library(DataExplorer)
 library(knitr)
@@ -38,11 +36,19 @@ library(janitor)
 library(UpSetR)    # upset plot cho pattern
 library(visdat)    
 library(skimr)     # skim for quick summary
+
+# Clear existing data and graphics
+rm(list=ls())
+graphics.off()
+
+# Define cycles and their NHANES letter suffixes 
+cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
+letters <- c("D","E","F","G","H","I","J")
 ```
 
 # Functions
 
-```{r}
+```{r functions}
 # A function to average the day 1 and day 2 data
 NHANES_d1d2_average = function(COHORT1, COHORT2, identifier){
     # Check which columns exist in both COHORT and COHORT2
@@ -101,16 +107,6 @@ gt_cov_2col <- function(data, vars, digits = 1, title = NULL) {
     fmt_number(columns = percent, decimals = digits) %>%
     tab_options(table.font.size = px(12), data_row.padding = px(4))
 }
-```
-
-# Data preprocessing
-
-## Demo & health variables
-
-```{r}
-years   <- c("2005","2007","2009","2011","2013","2015","2017")
-suffix  <- c("_D","_E","_F","_G","_H","_I","_J")
-cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
 
 # Function: download XPT and keep SEQN + specified columns
 read_keep <- function(url, keep) {
@@ -119,6 +115,26 @@ read_keep <- function(url, keep) {
   df <- foreign::read.xport(tf)
   df[, intersect(names(df), c("SEQN", keep)), drop = FALSE]
 }
+
+# Function: left join while dropping duplicate columns from y
+left_join_drop_dups <- function(x, y, by) {
+  cols_y <- union(by, setdiff(names(y), names(x)))
+  y_sel  <- select(y, all_of(cols_y))
+  left_join(x, y_sel, by = by)
+}
+```
+
+# Data preprocessing
+
+## Demo & health variables
+
+```{r download and merge data}
+#| eval: false
+#| include: false
+
+years   <- c("2005","2007","2009","2011","2013","2015","2017")
+suffix  <- c("_D","_E","_F","_G","_H","_I","_J")
+cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
 
 # Groups of variables
 demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU","WTMEC2YR",
@@ -199,40 +215,42 @@ for (tb in dsd_table) {
 
 dsd_0518 <- bind_rows(dsd_list)
 dsd_0518 <- select(dsd_0518, c("SEQN", "DSD010"))
-glimpse(dsd_0518)
 
 # merge dsd in "demo_health_0518" df
 demo_health_0518 <- demo_health_0518 %>%
   left_join(dsd_0518, by = "SEQN")
-glimpse(demo_health_0518)
 
-# save data
-# write_xlsx()
+# Save demo_health_0518 to CSV file
+write_csv(demo_health_0518, "DATA/demo_health_0518.csv")
+
+# Clear from memory and load back from CSV
+rm(demo_health_0518, dsd_0518, dsd_list)
+gc()
+```
+
+```{r load demo_health_0518}
+# Load demo_health_0518 back from CSV
+demo_health_0518 <- read_csv("DATA/demo_health_0518.csv", show_col_types = FALSE)
 ```
 
 ## Dietary index variables
 
-```{r}
-### Prepare dataset ###
-# Set base_path folder 
-BASE <- "/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/DATA"
-
-# Define cycles and their NHANES letter suffixes 
-cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
-letters <- c("D","E","F","G","H","I","J")
+```{r prepare common data}
+#| eval: false
+#| include: false
 
 # Create an empty list to store all cycles
 NHANES_ALL <- list()
 
 # Loop: read files for each cycle and store as a nested list
 for (i in seq_along(cycles)) {
-  cyc <- cycles[i]   
-  let <- letters[i]  
+  cyc <- cycles[i]
+  let <- letters[i]
   
   # Build subfolders for this cycle
-  fped_dir <- file.path(BASE, "FPED",     paste0("FPED_", cyc))
-  nutr_dir <- file.path(BASE, "NUTRIENT", paste0("NUTRIENT_", cyc))
-  demo_dir <- file.path(BASE, "DEMO",     paste0("DEMO_", cyc))
+  fped_dir <- file.path("DATA", "FPED",     paste0("FPED_", cyc))
+  nutr_dir <- file.path("DATA", "NUTRIENT", paste0("NUTRIENT_", cyc))
+  demo_dir <- file.path("DATA", "DEMO",     paste0("DEMO_", cyc))
   
   # Read 9 expected tables for the cycle
   # FPED: day 1/2 total; NUTRIENT: day 1/2 total; NUTRIENT_IND/FPED_IND: individual foods
@@ -255,16 +273,15 @@ for (i in seq_along(cycles)) {
   # Save this cycle into the outer list, named by its code (e.g., "1718")
   NHANES_ALL[[cyc]] <- cycle_list
 }
-
-### Use dietary package ###
-cycles <- c("0506","0708","0910","1112","1314","1516","1718")
 ```
 
 ### HEI2020
 
-```{r}
-# map_dfr() loops through each cycle, runs the function() inside,then automatically bind_rows() the results of all cycles into a final df 
-# ---------- HEI2020 ----------
+```{r prepare and calculate HEI2020}
+#| eval: false
+#| include: false
+
+# Prepare HEI2020 specific data
 HEI2020_0518 <- map_dfr(cycles, function(cyc) { 
   dat <- NHANES_ALL[[cyc]]
   out <- HEI2020_NHANES_FPED(
@@ -282,8 +299,11 @@ HEI2020_0518 <- map_dfr(cycles, function(cyc) {
 
 ### AHEI
 
-```{r}
-# ---------- AHEI ----------
+```{r prepare and calculate AHEI}
+#| eval: false
+#| include: false
+
+# Prepare AHEI specific data
 AHEI_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
   out <- AHEI_NHANES_FPED(
@@ -300,8 +320,11 @@ AHEI_0518 <- map_dfr(cycles, function(cyc) {
 
 ### DASH
 
-```{r}
-# ---------- DASH ----------
+```{r prepare and calculate DASH}
+#| eval: false
+#| include: false
+
+# Prepare DASH specific data
 DASH_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
   out <- DASH_NHANES_FPED(
@@ -318,8 +341,11 @@ DASH_0518 <- map_dfr(cycles, function(cyc) {
 
 ### aMED
 
-```{r}
-# ---------- aMED ----------
+```{r prepare and calculate aMED}
+#| eval: false
+#| include: false
+
+# Prepare aMED specific data
 AMED_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
   out <- MED_NHANES_FPED(
@@ -331,13 +357,17 @@ AMED_0518 <- map_dfr(cycles, function(cyc) {
   )
   mutate(out, cycle = cyc)
 })
+
 #View(AMED_0518)
 ```
 
 ### DII
 
-```{r}
-# ---------- DII ----------
+```{r prepare and calculate DII}
+#| eval: false
+#| include: false
+
+# Prepare DII specific data
 DII_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
   out <- DII_NHANES_FPED(
@@ -349,12 +379,16 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
   )
   mutate(out, cycle = cyc)
 })
+
 #View(DII_0518)
 ```
 
 ### PHDI
 
-```{r}
+```{r prepare and calculate PHDI}
+#| eval: false
+#| include: false
+
 # ---------- PHDI ----------
 # prepare data (PHDI function requires SERV_DATA=FPED_NUTRIENT_DEMO in a dataset) 
 # DR1TKCAL: Energy (kcal) - Dietary Interview - Total Nutrient Intakes, First Day
@@ -363,35 +397,29 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
 # --------- link the food pattern data for each NHANES individual with their nutrient and demographic data ---------
 # import food pattern (unit grams/day)
 
-# set working directory
-setwd("/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/CODE/R script/PHDI. calculation step 1-8/Step 7. Create averaged FPED files for each NHANES cycle/Input")
-
 # Read in the data
 # FPED file (food pattern variable files)
 ## 2017-2018
-FPED_DR1TOT_gram_1718_d1 = read_csv("FPED_DR1TOT_gram_1718_d1.csv")
-FPED_DR1TOT_gram_1718_d2 = read_csv("FPED_DR1TOT_gram_1718_d2.csv")
+FPED_DR1TOT_gram_1718_d1 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1718_d1.csv")
+FPED_DR1TOT_gram_1718_d2 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1718_d2.csv")
 ## 2015-2016
-FPED_DR1TOT_gram_1516_d1 = read_csv("FPED_DR1TOT_gram_1516_d1.csv")
-FPED_DR1TOT_gram_1516_d2 = read_csv("FPED_DR1TOT_gram_1516_d2.csv")
+FPED_DR1TOT_gram_1516_d1 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1516_d1.csv")
+FPED_DR1TOT_gram_1516_d2 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1516_d2.csv")
 ## 2013-2014
-FPED_DR1TOT_gram_1314_d1 = read_csv("FPED_DR1TOT_gram_1314_d1.csv")
-FPED_DR1TOT_gram_1314_d2 = read_csv("FPED_DR1TOT_gram_1314_d2.csv")
+FPED_DR1TOT_gram_1314_d1 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1314_d1.csv")
+FPED_DR1TOT_gram_1314_d2 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1314_d2.csv")
 ## 2011-2012
-FPED_DR1TOT_gram_1112_d1 = read_csv("FPED_DR1TOT_gram_1112_d1.csv")
-FPED_DR1TOT_gram_1112_d2 = read_csv("FPED_DR1TOT_gram_1112_d2.csv")
+FPED_DR1TOT_gram_1112_d1 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1112_d1.csv")
+FPED_DR1TOT_gram_1112_d2 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_1112_d2.csv")
 ## 2009-2010
-FPED_DR1TOT_gram_0910_d1 = read_csv("FPED_DR1TOT_gram_0910_d1.csv")
-FPED_DR1TOT_gram_0910_d2 = read_csv("FPED_DR1TOT_gram_0910_d2.csv")
+FPED_DR1TOT_gram_0910_d1 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_0910_d1.csv")
+FPED_DR1TOT_gram_0910_d2 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_0910_d2.csv")
 ## 2007-2008
-FPED_DR1TOT_gram_0708_d1 = read_csv("FPED_DR1TOT_gram_0708_d1.csv")
-FPED_DR1TOT_gram_0708_d2 = read_csv("FPED_DR1TOT_gram_0708_d2.csv")
+FPED_DR1TOT_gram_0708_d1 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_0708_d1.csv")
+FPED_DR1TOT_gram_0708_d2 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_0708_d2.csv")
 ## 2005-2006
-FPED_DR1TOT_gram_0506_d1 = read_csv("FPED_DR1TOT_gram_0506_d1.csv")
-FPED_DR1TOT_gram_0506_d2 = read_csv("FPED_DR1TOT_gram_0506_d2.csv")
-
-## Nutrient file (with calorie information)
-cycles <- c("0506","0708","0910","1112","1314","1516","1718")
+FPED_DR1TOT_gram_0506_d1 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_0506_d1.csv")
+FPED_DR1TOT_gram_0506_d2 = read_csv("DATA/FPED_DR1TOT_gram/FPED_DR1TOT_gram_0506_d2.csv")
 
 NUTRIENT_DEMO_list <- list ()
 for (cyc in cycles) {
@@ -524,6 +552,9 @@ glimpse(PHDI_0518_mean)
 ## Mortality variables
 
 ```{r}
+#| eval: false
+#| include: false
+
 # Map cycle 
 cyc_years <- c(
   "0506" = "2005_2006",
@@ -558,7 +589,7 @@ read_mort <- function(dir, cyc) {
 }
 
 # Read and merge mortality data for 2005-2018
-MORT_DIR <- "/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/DATA/Mortality"
+MORT_DIR <- "DATA/Mortality"
 cycles   <- names(cyc_years)
 
 mort_0518 <- do.call(
@@ -571,12 +602,13 @@ mort_0518 <- do.call(
 ## Greenhouse gas variable
 
 ```{r}
+#| eval: false
+#| include: false
+
 # Use only the dietary recall that is reliable and met the minimum criteria in NHANES-DR1DRSTZ ==1 OR DR2DRSTZ == 1 (James applied)
 # import GHG day 1 and day 2 data
 # Set base_path folder 
-BASE <- "/Users/jessie/Desktop/Vyy/Projects 2025/Diet score paper - Dr. Linh/Documents/PHDI-GHG paper/GHG_PHDI_merging/Step 2/Input/GHG"
-
-cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
+BASE <- "DATA/GHG"
 
 # create a blank frame
 GHG_0518 <- data.frame()
@@ -632,13 +664,10 @@ glimpse(GHG_0518)
 ## Merging all data
 
 ```{r}
-by_keys <- c("SEQN","cycle")
+#| eval: false
+#| include: false
 
-left_join_drop_dups <- function(x, y, by) {
-  cols_y <- union(by, setdiff(names(y), names(x)))
-  y_sel  <- select(y, all_of(cols_y))
-  left_join(x, y_sel, by = by)
-}
+by_keys <- c("SEQN","cycle")
 
 # HEALTH -> (HEI, AHEI, DASH, aMED, DII, PHDI_mean) -> MORT -> GHG_0518
 nhanes_merged_0518 <- Reduce(
@@ -658,6 +687,14 @@ nhanes_merged_0518 <- Reduce(
 
 glimpse(nhanes_merged_0518)
 #View(nhanes_merged_0518)
+
+# Save nhanes_merged_0518 to CSV file
+write_csv(nhanes_merged_0518, "DATA/nhanes_merged_0518.csv")
+```
+
+```{r load nhanes_merged_0518}
+# Load nhanes_merged_0518 back from CSV
+nhanes_merged_0518 <- read_csv("DATA/nhanes_merged_0518.csv", show_col_types = FALSE)
 ```
 
 # Data cleaning
