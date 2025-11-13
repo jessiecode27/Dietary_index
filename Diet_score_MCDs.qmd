@@ -10,7 +10,8 @@ editor_options:
 # Setup
 
 ```{r setup}
-setwd("D:/Clients/VinUni/Dr. Linh/Dietary_index")
+#setwd("D:/Clients/VinUni/Dr. Linh/Dietary_index")
+setwd("/Users/jessie/Desktop/Vyy/Projects 2025/Dietscorepaper_Dr.Linh")
 library(dplyr)
 library(DataExplorer)
 library(knitr)
@@ -133,12 +134,19 @@ left_join_drop_dups <- function(x, y, by) {
 #| include: false
 
 years   <- c("2005","2007","2009","2011","2013","2015","2017")
-suffix  <- c("_D","_E","_F","_G","_H","_I","_J")
+years   <- c("2005","2007","2009","2011","2013","2015","2017P")
+suffix  <- c("_D","_E","_F","_G","_H","_I","_P") # _P for 2017-Mar2020
+suffix  <- c("_D","_E","_F","_G","_H","_I","_J") 
+cycles  <- c("0506","0708","0910","1112","1314","1516","1718_1920")
 cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
 
 # Groups of variables
-demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU","WTMEC2YR",
-                 "DMDEDUC2","RIDRETH1","DMDMARTL","INDFMPIR")
+demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU",
+                 "WTMEC2YR","DMDEDUC2",        # 2-year weights (2005-2016)
+                 "WTMECPRP","WTINTPRP",        # 4-year pre-pandemic weights (2017–Mar 2020)
+                 
+                 "RIDRETH1","DMDMARTL","INDFMPIR",
+                 "DMDHHSIZ")                   # household size
 mcq_cols    <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F","MCQ220")
 diq_cols    <- c("DIQ010","DIQ050", "DID060", "DIQ070", "DID040", "DIQ175S")
 bpq_cols    <- c("BPQ020")
@@ -182,8 +190,6 @@ for (i in seq_along(years)) {
   alq_i  <- read_keep(U("ALQ"),    alq_cols)
   paq_i  <- read_keep(U("PAQ"),    paq_cols)
   rhq_i  <- read_keep(U("RHQ"),    rhq_cols)
-  
-  # chưa merge dsd_cols: check lại link path
   
   # Merge into one dataframe for this cycle
   per_cycle[[i]] <- Reduce(
