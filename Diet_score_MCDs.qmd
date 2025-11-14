@@ -133,12 +133,9 @@ left_join_drop_dups <- function(x, y, by) {
 #| eval: false
 #| include: false
 
-years   <- c("2005","2007","2009","2011","2013","2015","2017")
 years   <- c("2005","2007","2009","2011","2013","2015","2017P")
 suffix  <- c("_D","_E","_F","_G","_H","_I","_P") # _P for 2017-Mar2020
-suffix  <- c("_D","_E","_F","_G","_H","_I","_J") 
 cycles  <- c("0506","0708","0910","1112","1314","1516","1718_1920")
-cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
 
 # Groups of variables
 demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU",
@@ -150,7 +147,10 @@ demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU",
 mcq_cols    <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F","MCQ220")
 diq_cols    <- c("DIQ010","DIQ050", "DID060", "DIQ070", "DID040", "DIQ175S")
 bpq_cols    <- c("BPQ020")
-bpx_cols    <- c("BPXSY1","BPXSY2","BPXSY3","BPXSY4","BPXDI1","BPXDI2","BPXDI3","BPXDI4") # full cycles have four readings
+
+bpx_cols    <- c("BPXSY1","BPXSY2","BPXSY3","BPXSY4","BPXDI1","BPXDI2","BPXDI3","BPXDI4") # 2005-2016 cycles have 4 readings
+bpxo_cols   <- c("BPXOSY1","BPXOSY2","BPXOSY3","BPXODI1","BPXODI2","BPXODI3") # 2017-Mar2020 cycle have 3 readings
+
 bmx_cols    <- c("BMXBMI","BMXWAIST")
 ghb_cols    <- c("LBXGH")
 glu_cols    <- c("LBXGLU","LBXIN")     # LBXIN: Insulin (uU/mL) 
@@ -172,14 +172,45 @@ for (i in seq_along(years)) {
   yr  <- years[i]; suf <- suffix[i]
   
   # Short function to build NHANES file URL
-  U <- function(stub) sprintf("https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/%s/DataFiles/%s%s.XPT", yr, stub, suf)
-  
+  U <- function(stub) {
+    if (yr == "2017P") {
+    # 2017–March 2020: file có prefix "P_"
+    sprintf("https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_%s.XPT", stub)
+    } else {
+    sprintf("https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/%s/DataFiles/%s%s.XPT", 
+            yr, stub, suf)
+    }
+  }
   # Read each component
   demo_i <- read_keep(U("DEMO"),   demo_cols)
   mcq_i  <- read_keep(U("MCQ"),    mcq_cols)
   diq_i  <- read_keep(U("DIQ"),    diq_cols)
   bpq_i  <- read_keep(U("BPQ"),    bpq_cols)
-  bpx_i  <- read_keep(U("BPX"),    bpx_cols)
+  
+  # exception for bpx
+  if (yr == "2017P") {
+    # 2017–Mar 2020: BPXO, 3 readings
+    bpx_i <- read_keep(
+      "https://wwwn.cdc.gov/Nchs/Data/Nhanes/Public/2017/DataFiles/P_BPXO.XPT",
+      c(bpxo_cols)
+    ) %>%
+      rename(
+        BPXSY1 = BPXOSY1,
+        BPXSY2 = BPXOSY2,
+        BPXSY3 = BPXOSY3,
+        BPXDI1 = BPXODI1,
+        BPXDI2 = BPXODI2,
+        BPXDI3 = BPXODI3
+      ) %>%
+      mutate(
+        BPXSY4 = NA_real_,
+        BPXDI4 = NA_real_
+      )
+  } else {
+    # 2005–2016: BPX, 4 readings
+    bpx_i <- read_keep(U("BPX"), bpx_cols)
+  }
+  
   bmx_i  <- read_keep(U("BMX"),    bmx_cols)
   ghb_i  <- read_keep(U("GHB"),    ghb_cols)
   glu_i  <- read_keep(U("GLU"),    glu_cols)
@@ -199,12 +230,12 @@ for (i in seq_along(years)) {
 }
 
 # Bind all cycles and add "cycle" column
-demo_health_0518 <- bind_rows(per_cycle, .id = "cycle")
-glimpse(demo_health_0518)
+demo_health_0520 <- bind_rows(per_cycle, .id = "cycle")
+glimpse(demo_health_0520)
 # View(demo_health_0518)
 
 # supplement "vitamin/mineral supplement use" (DSD010) variable
-dsd_table <- c("DSQ1_D", "DSQTOT_E", "DSQTOT_F", "DSQTOT_G", "DSQTOT_H", "DSQTOT_I", "DSQTOT_J")
+dsd_table <- c("DSQ1_D", "DSQTOT_E", "DSQTOT_F", "DSQTOT_G", "DSQTOT_H", "DSQTOT_I", "P_DSQTOT")
   
 dsd_list <- list ()
 for (tb in dsd_table) {
@@ -219,24 +250,24 @@ for (tb in dsd_table) {
   dsd_list[[tb]] <- df
 }
 
-dsd_0518 <- bind_rows(dsd_list)
-dsd_0518 <- select(dsd_0518, c("SEQN", "DSD010"))
+dsd_0520 <- bind_rows(dsd_list)
+dsd_0520 <- select(dsd_0520, c("SEQN", "DSD010"))
 
 # merge dsd in "demo_health_0518" df
-demo_health_0518 <- demo_health_0518 %>%
-  left_join(dsd_0518, by = "SEQN")
+demo_health_0520 <- demo_health_0520 %>%
+  left_join(dsd_0520, by = "SEQN")
 
 # Save demo_health_0518 to CSV file
-write_csv(demo_health_0518, "DATA/demo_health_0518.csv")
+write_csv(demo_health_0520, "DATA/demo_health_0520.csv")
 
 # Clear from memory and load back from CSV
-rm(demo_health_0518, dsd_0518, dsd_list)
+rm(demo_health_0520, dsd_0520, dsd_list)
 gc()
 ```
 
-```{r load demo_health_0518}
-# Load demo_health_0518 back from CSV
-demo_health_0518 <- read_csv("DATA/demo_health_0518.csv", show_col_types = FALSE)
+```{r load demo_health_0520}
+# Load demo_health_0520 back from CSV
+demo_health_0520 <- read_csv("DATA/demo_health_0520.csv", show_col_types = FALSE)
 ```
 
 ## Dietary index variables
