@@ -43,8 +43,8 @@ rm(list=ls())
 graphics.off()
 
 # Define cycles and their NHANES letter suffixes 
-cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
-letters <- c("D","E","F","G","H","I","J")
+cycles  <- c("0506","0708","0910","1112","1314","1516","1720")
+letters <- c("D","E","F","G","H","I","P")
 ```
 
 # Functions
@@ -135,7 +135,7 @@ left_join_drop_dups <- function(x, y, by) {
 
 years   <- c("2005","2007","2009","2011","2013","2015","2017P")
 suffix  <- c("_D","_E","_F","_G","_H","_I","_P") # _P for 2017-Mar2020
-cycles  <- c("0506","0708","0910","1112","1314","1516","1718_1920")
+cycles  <- c("0506","0708","0910","1112","1314","1516","1720")
 
 # Groups of variables
 demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU",
@@ -267,7 +267,7 @@ gc()
 
 ```{r load demo_health_0520}
 # Load demo_health_0520 back from CSV
-demo_health_0520 <- read_csv("DATA/demo_health_0520.csv", show_col_types = FALSE)
+demo_health_0518 <- read_csv("DATA/demo_health_0520.csv", show_col_types = FALSE)
 ```
 
 ## Dietary index variables
@@ -291,6 +291,23 @@ for (i in seq_along(cycles)) {
   
   # Read 9 expected tables for the cycle
   # FPED: day 1/2 total; NUTRIENT: day 1/2 total; NUTRIENT_IND/FPED_IND: individual foods
+  if (cyc == "1720") {
+    cycle_list <- list(
+      DEMO          = read_xpt(file.path(demo_dir, "P_DEMO.XPT")),
+      
+      NUTRIENT      = read_xpt(file.path(nutr_dir, "P_DR1TOT.xpt")),
+      NUTRIENT2     = read_xpt(file.path(nutr_dir, "P_DR2TOT.xpt")),
+      NUTRIENT_IND  = read_xpt(file.path(nutr_dir, "P_DR1IFF.xpt")),
+      NUTRIENT_IND2 = read_xpt(file.path(nutr_dir, "P_DR2IFF.xpt")),
+      
+      FPED          = read_sas(file.path(fped_dir, "fped_dr1tot_1720.sas7bdat")),
+      FPED2         = read_sas(file.path(fped_dir, "fped_dr2tot_1720.sas7bdat")),
+      FPED_IND      = read_sas(file.path(fped_dir, "fped_dr1iff_1720.sas7bdat")),
+      FPED_IND2     = read_sas(file.path(fped_dir, "fped_dr2iff_1720.sas7bdat"))
+    )
+    
+  } else {
+    ## cycles 0506–1516 
   cycle_list <- list(
     DEMO          = read_xpt(file.path(demo_dir, sprintf("DEMO_%s.xpt", let))),             
     
@@ -306,8 +323,8 @@ for (i in seq_along(cycles)) {
     FPED_IND2     = read_sas(file.path(fped_dir, sprintf("fped_dr2iff_%s.sas7bdat", cyc))), 
     NUTRIENT_IND2 = read_xpt(file.path(nutr_dir, sprintf("DR2IFF_%s.xpt", let)))            
   )
-  
-  # Save this cycle into the outer list, named by its code (e.g., "1718")
+  }
+  # Save this cycle into the outer list, named by its code (e.g., "0506")
   NHANES_ALL[[cyc]] <- cycle_list
 }
 ```
