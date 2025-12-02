@@ -436,6 +436,27 @@ DII_0520 <- map_dfr(cycles, function(cyc) {
 glimpse(DII_0520)
 ```
 
+### ACS2020
+
+```{r prepare and calculate ACS2020}
+#| eval: false
+#| include: false
+
+# Prepare ACS2020 specific data
+ACS2020_0520 <- map_dfr(cycles, function(cyc) {
+  dat <- NHANES_ALL[[cyc]]
+  out <- ACS2020_NHANES_FPED(
+    FPED_IND_PATH      = dat$FPED_IND,
+    NUTRIENT_IND_PATH  = dat$NUTRIENT_IND,
+    FPED_IND_PATH2     = dat$FPED_IND2,
+    NUTRIENT_IND_PATH2 = dat$NUTRIENT_IND2
+  )
+  mutate(out, cycle = cyc)
+})
+
+glimpse(ACS2020_0520)
+```
+
 ### PHDI
 
 ```{r prepare and calculate PHDI}
@@ -748,6 +769,7 @@ nhanes_merged_0520 <- Reduce(
     DASH_0520,
     AMED_0520,
     DII_0520,
+    ACS2020_0520,
     PHDI_0518_mean,
     mort_0518, 
     GHG_0518
@@ -758,7 +780,7 @@ glimpse(nhanes_merged_0520)
 #View(nhanes_merged_0518)
 
 # Save nhanes_merged_0518 to CSV file
-write_csv(nhanes_merged_0518, "DATA/nhanes_merged_0518.csv")
+write_csv(nhanes_merged_0520, "DATA/nhanes_merged_0520.csv")
 ```
 
 ```{r load nhanes_merged_0518}
