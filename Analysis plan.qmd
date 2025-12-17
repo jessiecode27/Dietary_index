@@ -1,0 +1,87 @@
+---
+format:
+  docx:
+    number-sections: true
+    toc: true
+execute:
+  echo: false
+  message: false
+  warning: false
+engine: knitr
+---
+
+# Các biến hiện có
+- Diet scores:
+  - HEI2020_CAT: Healthy Eating Index-2020
+  - AHEI_CAT: Alternate Healthy Eating Index
+  - DASH_CAT: Dietary Approaches to Stop Hypertension
+  - aMED_CAT: Alternate Mediterranean Diet
+  - DII_CAT: Dietary Inflammatory Index
+  - PHDI_CAT: Planetary Health Diet Index
+- Chronic diseases:
+  - M_CVD: Major cardiovascular disease
+  - T2D: Type 2 diabetes
+  - Cancer: Cancer
+  - MetS: Metabolic syndrome
+  - MCD: Major chronic disease
+- Covariates:
+  - RIAGENDR: Gender
+  - RIDAGEYR_CAT: Age group
+  - RIDRETH1: Race/ethnicity
+  - DMDEDUC2_CAT: Education level
+  - DMDMARTL_CAT: Marital status
+  - INDFMPIR_CAT: Family income to poverty ratio
+  - BMI_CAT: BMI category
+  - OBESE: Obesity status
+  - AB_OBESE: Abdominal obesity
+  - SMQ_CAT: Smoking status
+  - ALQ130_CAT: Alcohol consumption (drinks per week)
+  - PAQ_CAT: Physical activity level
+  - TOTALKCAL_PHDI_mean: Total energy intake (kcal/day)
+  - DSD010_CAT: Dietary supplement use
+  - DMDHHSIZ: Household size
+  - mort_0518: All-cause mortality (2015-2018)
+  - GHG_0518: Greenhouse gas emissions (2015-2018)
+
+# Analysis plan
+- Table: So sánh gender, age group, race/ethnicity, education level, marital status, family income to poverty ratio, BMI category, smoking status, alcohol consumption, physical activity level, total energy intake, dietary supplement use, household size giữa Q1 và Q5 của dietscore.
+
+- Figure: Phân tích multivariate logistic regression từng dietscore adjust theo major chronic diseases, adjust theo các biến số gender, age group, race/ethnicity, education level, marital status, family income to poverty ratio, BMI category, smoking status, alcohol consumption, physical activity level, total energy intake, dietary supplement use, household size (Điểm dietscoret tính theo quartile so Q5 với Q1). Sau đó tính e-value và vẽ biểu đồ forest plot tương tự như fig 2 bài của chị Anne.
+
+::: {#fig-example}
+![](images/Anne_fig2.png)
+
+Fig 2 bài của chị Anne
+:::
+
+\newpage
+
+- Figure: Phân tích multivariate logistic regression từng món ăn trong dietscore dietscore adjust theo major chronic diseases, adjust theo các biến số gender, age group, race/ethnicity, education level, marital status, family income to poverty ratio, BMI category, smoking status, alcohol consumption, physical activity level, total energy intake, dietary supplement use, household size (Điểm dietscoret tính theo quartile so Q5 với Q1). Sau đó vẽ biểu đồ heatmap tương tự như fig 4 bài của chị Anne.
+
+::: {#fig-example}
+![](images/Anne_fig4.png)
+
+Fig 4 bài của chị Anne
+:::
+
+\newpage
+
+- Figure: Spline knot logistic regression với từng dietscore theo major chronic diseases hoặc từng diet score theo mortality, adjust theo các biến số gender, age group, race/ethnicity, education level, marital status, family income to poverty ratio, BMI category, smoking status, alcohol consumption, physical activity level, total energy intake, dietary supplement use, household size, sau đó vẽ biểu đồ tương tự fig 3 bài của Peilu.
+
+::: {#fig-example}
+![](images/Peilu_fig3.png)
+
+Fig 3 bài của Peilu
+:::
+
+\newpage
+
+- Figure: Vẽ biểu đồ liên quan giữa từng dietscore với green house gas emissions (GHG) tương tự như fig 3 bài của Jiada. Fit 2 line:
+  - Line 1: Cox proportional hazards model giữa dietscore (theo quartile so Q5 với Q1) với GHG adjust theo major chronic diseases theo mortality, adjust theo các biến số gender, age group, race/ethnicity, education level, marital status, family income to poverty ratio, BMI category, smoking status, alcohol consumption, physical activity level, total energy intake, dietary supplement use, household size.
+  - Line 2: Linear regression giữa dietscore (theo quartile so Q5 với Q1) với GHG adjust theo major chronic diseases theo mortality, adjust theo các biến số gender, age group, race/ethnicity, education level, marital status, family income to poverty ratio, BMI category, smoking status, alcohol consumption, physical activity level, total energy intake, dietary supplement use, household size.
+
+::: {#fig-example}
+![](images/Jiada_fig3.png)
+
+Fig 3 bài của Jiada
+:::

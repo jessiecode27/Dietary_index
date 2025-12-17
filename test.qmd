@@ -1,0 +1,265 @@
+\newpage
+
+```{r}
+library(EValue)
+```
+
+```{r}
+# Look at the number of total length of the dataset and missing in variable WTDR2D of each datasets
+
+lengths_list <- list(
+  demo_health_0518 = nrow(demo_health_0518),
+  HEI2020_0518 = nrow(HEI2020_0518),
+  AHEI_0518 = nrow(AHEI_0518),
+  DASH_0518 = nrow(DASH_0518),
+  AMED_0518 = nrow(AMED_0518),
+  DII_0518 = nrow(DII_0518),
+  PHDI_0518_mean = nrow(PHDI_0518_mean),
+  mort_0518 = nrow(mort_0518),
+  GHG_0518 = nrow(GHG_0518)
+)
+lengths_list
+
+# Check if WTDR2D exists in each dataset and get the length after removing missing in WTDR2D
+datasets <- list(
+  demo_health_0518 = demo_health_0518,
+  HEI2020_0518 = HEI2020_0518,
+  AHEI_0518 = AHEI_0518,
+  DASH_0518 = DASH_0518,
+  AMED_0518 = AMED_0518,
+  DII_0518 = DII_0518,
+  PHDI_0518_mean = PHDI_0518_mean,
+  mort_0518 = mort_0518,
+  GHG_0518 = GHG_0518
+)
+
+lengths_filtered_list <- lapply(names(datasets), function(name) {
+  df <- datasets[[name]]
+  if ("WTDR2D" %in% names(df)) {
+    n_total <- nrow(df)
+    n_valid <- sum(!is.na(df$WTDR2D))
+    n_missing <- sum(is.na(df$WTDR2D))
+    data.frame(
+      Dataset = name,
+      Has_WTDR2D = TRUE,
+      Total = n_total,
+      Valid = n_valid,
+      Missing = n_missing
+    )
+  } else {
+    data.frame(
+      Dataset = name,
+      Has_WTDR2D = FALSE,
+      Total = nrow(df),
+      Valid = NA,
+      Missing = NA
+    )
+  }
+})
+
+lengths_filtered_df <- do.call(rbind, lengths_filtered_list)
+print(lengths_filtered_df)
+```
+
+```{r}
+by_keys <- c("SEQN", "cycle")
+
+# HEALTH -> (HEI, AHEI, DASH, aMED, DII, PHDI_mean) -> MORT -> GHG_0518
+nhanes_merged_0518 <- Reduce(
+  function(x, y) left_join_drop_dups(x, y, by = by_keys),
+  list(
+    demo_health_0518,
+    mort_0518, 
+    GHG_0518,
+    PHDI_0518_mean
+  )
+)
+
+datasets <- list(
+  nhanes_merged_0518 = nhanes_merged_0518
+)
+
+lengths_filtered_list <- lapply(names(datasets), function(name) {
+  df <- datasets[[name]]
+  if ("WTDR2D" %in% names(df)) {
+    n_total <- nrow(df)
+    n_valid <- sum(!is.na(df$WTDR2D))
+    n_missing <- sum(is.na(df$WTDR2D))
+    data.frame(
+      Dataset = name,
+      Has_WTDR2D = TRUE,
+      Total = n_total,
+      Valid = n_valid,
+      Missing = n_missing
+    )
+  } else {
+    data.frame(
+      Dataset = name,
+      Has_WTDR2D = FALSE,
+      Total = nrow(df),
+      Valid = NA,
+      Missing = NA
+    )
+  }
+})
+
+lengths_filtered_df <- do.call(rbind, lengths_filtered_list)
+print(lengths_filtered_df)
+```
+
+```{r}
+by_keys <- c("SEQN", "cycle", "WTDR2D")
+
+nhanes_merged_0518 <- Reduce(
+  function(x, y) left_join_drop_dups(x, y, by = by_keys),
+  list(
+    nhanes_merged_0518,
+    HEI2020_0518,
+    AHEI_0518,
+    DASH_0518,
+    AMED_0518,
+    DII_0518
+  )
+)
+
+datasets <- list(
+  nhanes_merged_0518 = nhanes_merged_0518
+)
+
+lengths_filtered_list <- lapply(names(datasets), function(name) {
+  df <- datasets[[name]]
+  if ("WTDR2D" %in% names(df)) {
+    n_total <- nrow(df)
+    n_valid <- sum(!is.na(df$WTDR2D))
+    n_missing <- sum(is.na(df$WTDR2D))
+    data.frame(
+      Dataset = name,
+      Has_WTDR2D = TRUE,
+      Total = n_total,
+      Valid = n_valid,
+      Missing = n_missing
+    )
+  } else {
+    data.frame(
+      Dataset = name,
+      Has_WTDR2D = FALSE,
+      Total = nrow(df),
+      Valid = NA,
+      Missing = NA
+    )
+  }
+})
+
+lengths_filtered_df <- do.call(rbind, lengths_filtered_list)
+print(lengths_filtered_df)
+```
+
+```{r}
+PHDI_GHG_FINAL_DATA_0518_design_14yr = svydesign(
+    id = ~SDMVPSU, 
+    strata = ~SDMVSTRA,
+    weight = ~WTDR14D,
+    data = nhanes_merged_0518_filter,
+    nest = TRUE)
+
+# Subpop call - all with complete data
+design <- subset(PHDI_GHG_FINAL_DATA_0518_design_14yr, 
+                 !is.na(get("HEI2020_cat")) & !is.na(get("AHEI_cat")) & 
+                 !is.na(get("DASH_cat")) & !is.na(get("AMED_cat")) & 
+                 !is.na(get("DII_cat")) & !is.na(get("PHDI_cat")) & 
+                 !is.na(get("M_CVD")) & !is.na(get("T2D")) & 
+                 !is.na(get("cancer")) & !is.na(get("MCD"))
+)
+
+# Age-adjusted logistic regression: MCD ~ HEI2020_ALL + Age
+model_mcd <- svyglm(MCD ~ HEI2020_cat + RIAGENDR + RIDAGEYR + RIDRETH1 + DMDEDUC2_CAT + DMDMARTL_CAT + 
+      INDFMPIR_CAT + SMQ_CAT + PAQ_CAT + TOTALKCAL_PHDI_mean + ALQ130_CAT + DMDHHSIZ + DSD010,
+                    design = design, 
+                    family = quasibinomial())
+
+# Create results table
+results_table <- broom::tidy(model_mcd) %>%
+  mutate(
+    OR = exp(estimate),
+    CI_lower = exp(estimate - 1.96 * std.error),
+    CI_upper = exp(estimate + 1.96 * std.error),
+    OR_CI = sprintf("%.2f (%.2f-%.2f)", OR, CI_lower, CI_upper)
+  ) %>%
+  select(term, estimate, std.error, p.value, OR_CI) %>%
+  flextable() %>%
+  set_header_labels(
+    term = "Term",
+    estimate = "Coefficient",
+    std.error = "Std. Error",
+    p.value = "p-value",
+    OR_CI = "OR (95% CI)"
+  ) %>%
+  colformat_double(j = c("estimate", "std.error", "p.value"), digits = 2) %>%
+  theme_box() %>%
+  autofit()
+
+results_table
+```
+
+```{r}
+nhanes_merged_0518_filter |>
+  filter(!is.na(get("HEI2020_cat")) & !is.na(get("AHEI_cat")) & 
+                 !is.na(get("DASH_cat")) & !is.na(get("AMED_cat")) & 
+                 !is.na(get("DII_cat")) & !is.na(get("PHDI_cat")) & 
+                 !is.na(get("M_CVD")) & !is.na(get("T2D")) & 
+                 !is.na(get("cancer")) & !is.na(get("MCD"))
+  ) |>
+  select(M_CVD) |>
+  summarise(
+    total = n(),
+    cases = sum(M_CVD, na.rm = TRUE),
+    prevalence = cases / total * 100
+  )
+```
+
+```{r}
+# Check missing values in covariates
+vars_to_include <- c(
+  "RIAGENDR","RIDAGEYR_CAT","RIDRETH1","DMDEDUC2_CAT","DMDMARTL_CAT",
+  "INDFMPIR_CAT","SMQ_CAT","PAQ_CAT","TOTALKCAL_PHDI_mean","ALQ130_CAT",
+  "DMDHHSIZ","DSD010_CAT"
+)
+
+missing_summary <- nhanes_merged_0518_filter |>
+  filter(!is.na(get("HEI2020_cat")) & !is.na(get("AHEI_cat")) & 
+                 !is.na(get("DASH_cat")) & !is.na(get("AMED_cat")) & 
+                 !is.na(get("DII_cat")) & !is.na(get("PHDI_cat")) & 
+                 !is.na(get("M_CVD")) & !is.na(get("T2D")) & 
+                 !is.na(get("cancer")) & !is.na(get("MCD"))
+  ) |>
+  select(all_of(vars_to_include)) |>
+  summarise(across(everything(), ~ sum(is.na(.)))) |>
+  pivot_longer(everything(), names_to = "Variable", values_to = "N_Missing") |>
+  mutate(
+    N_Total = nrow(nhanes_merged_0518_filter |>
+                     filter(!is.na(get("HEI2020_cat")) & !is.na(get("AHEI_cat")) & 
+                                    !is.na(get("DASH_cat")) & !is.na(get("AMED_cat")) & 
+                                    !is.na(get("DII_cat")) & !is.na(get("PHDI_cat")) & 
+                                    !is.na(get("M_CVD")) & !is.na(get("T2D")) & 
+                                    !is.na(get("cancer")) & !is.na(get("MCD")))),
+    Percent_Missing = round(N_Missing / N_Total * 100, 2)
+  )
+
+missing_summary
+```
+
+```{r}
+#| eval: false
+#| include: false
+#| label: tbl-characteristics
+#| tbl-cap: "Characteristics of the study population"
+
+tables_list <- list()
+vars_to_include <- c(
+  "RIAGENDR","RIDAGEYR_CAT","RIDRETH1","DMDEDUC2_CAT","DMDMARTL_CAT",
+  "INDFMPIR_CAT","SMQ_CAT","PAQ_CAT","TOTALKCAL_PHDI_mean","ALQ130_CAT",
+  "DMDHHSIZ","DSD010_CAT"
+)
+
+
+```

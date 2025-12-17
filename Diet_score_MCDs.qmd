@@ -1,10 +1,14 @@
 ---
-title: "nhanes_data"
-format: html
-editor: visual
-echo: true
-editor_options: 
-  chunk_output_type: console
+format:
+  docx:
+    number-sections: true
+    toc: true
+execute:
+  echo: false
+  message: false
+  warning: false
+engine: knitr
+fig-dpi: 400
 ---
 
 # Setup
@@ -36,6 +40,12 @@ library(janitor)
 library(UpSetR)    # upset plot cho pattern
 library(visdat)    
 library(skimr)     # skim for quick summary
+library(flextable)
+library(splines)
+library(labelled)
+library(gtsummary)
+library(EValue)
+library(survey)
 
 # Clear existing data and graphics
 rm(list=ls())
@@ -122,6 +132,20 @@ left_join_drop_dups <- function(x, y, by) {
   y_sel  <- select(y, all_of(cols_y))
   left_join(x, y_sel, by = by)
 }
+
+FitFlextableToPage <- function(ft, pgwidth = 6){
+  ft_out <- ft |> autofit()  # Automatically adjust columns to content width
+  ft_out <- width(ft_out, width = dim(ft_out)$widths * pgwidth / (flextable_dim(ft_out)$widths))
+  return(ft_out)
+}
+
+fisher.test.simulate.p.values <- function(data, variable, by, ...) {
+  result <- list()
+  test_results <- stats::fisher.test(data[[variable]], data[[by]], simulate.p.value = TRUE)
+  result$p <- test_results$p.value
+  result$test <- test_results$method
+  result
+}
 ```
 
 # Data preprocessing
@@ -137,15 +161,14 @@ suffix  <- c("_D","_E","_F","_G","_H","_I","_J")
 cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
 
 # Groups of variables
-demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU","WTMEC2YR",
-                 "DMDEDUC2","RIDRETH1","DMDMARTL","INDFMPIR")
+demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU","WTMEC2YR", "WTDR2D", "DMDEDUC2","RIDRETH1","DMDMARTL","INDFMPIR", "DMDHHSIZ")
 mcq_cols    <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F","MCQ220")
 diq_cols    <- c("DIQ010","DIQ050", "DID060", "DIQ070", "DID040", "DIQ175S")
 bpq_cols    <- c("BPQ020")
 bpx_cols    <- c("BPXSY1","BPXSY2","BPXSY3","BPXSY4","BPXDI1","BPXDI2","BPXDI3","BPXDI4") # full cycles have four readings
 bmx_cols    <- c("BMXBMI","BMXWAIST")
 ghb_cols    <- c("LBXGH")
-glu_cols    <- c("LBXGLU","LBXIN")     # LBXIN: Insulin (uU/mL) 
+glu_cols    <- c("LBXGLU","LBXIN")     # LBXIN: Insulin (uU/mL)
 trigly_cols <- c("LBDLDL","LBXTR","LBDAPB")
 hdl_cols    <- c("LBDHDD")
 
@@ -230,7 +253,7 @@ gc()
 
 ```{r load demo_health_0518}
 # Load demo_health_0518 back from CSV
-demo_health_0518 <- read_csv("DATA/demo_health_0518.csv", show_col_types = FALSE)
+demo_health_0518 <- read_csv("D:/Clients/VinUni/Dr. Linh/Dietary_index/DATA/demo_health_0518.csv", show_col_types = FALSE)
 ```
 
 ## Dietary index variables
@@ -238,7 +261,6 @@ demo_health_0518 <- read_csv("DATA/demo_health_0518.csv", show_col_types = FALSE
 ```{r prepare common data}
 #| eval: false
 #| include: false
-
 # Create an empty list to store all cycles
 NHANES_ALL <- list()
 
@@ -280,10 +302,11 @@ for (i in seq_along(cycles)) {
 ```{r prepare and calculate HEI2020}
 #| eval: false
 #| include: false
-
-# Prepare HEI2020 specific data
+# Prepare HEI2020 specific data WITH weight variable
 HEI2020_0518 <- map_dfr(cycles, function(cyc) { 
   dat <- NHANES_ALL[[cyc]]
+  
+  # Calculate HEI scores
   out <- HEI2020_NHANES_FPED(
     FPED_PATH      = dat$FPED,
     NUTRIENT_PATH  = dat$NUTRIENT,
@@ -291,7 +314,15 @@ HEI2020_0518 <- map_dfr(cycles, function(cyc) {
     FPED_PATH2     = dat$FPED2,
     NUTRIENT_PATH2 = dat$NUTRIENT2
   )
-  mutate(out, cycle = cyc)
+  
+  # Extract weight variable from NUTRIENT data
+  weights <- dat$NUTRIENT %>% 
+    select(SEQN, WTDR2D)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "SEQN") %>%
+    mutate(cycle = cyc)
 })
 
 #View(HEI2020_0518)
@@ -302,17 +333,26 @@ HEI2020_0518 <- map_dfr(cycles, function(cyc) {
 ```{r prepare and calculate AHEI}
 #| eval: false
 #| include: false
-
 # Prepare AHEI specific data
 AHEI_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
+
+  # Calculate AHEI scores
   out <- AHEI_NHANES_FPED(
     FPED_IND_PATH      = dat$FPED_IND,
     NUTRIENT_IND_PATH  = dat$NUTRIENT_IND,
     FPED_IND_PATH2     = dat$FPED_IND2,
     NUTRIENT_IND_PATH2 = dat$NUTRIENT_IND2
   )
-  mutate(out, cycle = cyc)
+  
+  # Extract weight variable from NUTRIENT data
+  weights <- dat$NUTRIENT %>% 
+    select(SEQN, WTDR2D)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "SEQN") %>%
+    mutate(cycle = cyc)
 })
 
 #View(AHEI_0518)
@@ -323,17 +363,26 @@ AHEI_0518 <- map_dfr(cycles, function(cyc) {
 ```{r prepare and calculate DASH}
 #| eval: false
 #| include: false
-
 # Prepare DASH specific data
 DASH_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
+
+  # Calculate DASH scores
   out <- DASH_NHANES_FPED(
     FPED_IND_PATH      = dat$FPED_IND,
     NUTRIENT_IND_PATH  = dat$NUTRIENT_IND,
     FPED_IND_PATH2     = dat$FPED_IND2,
     NUTRIENT_IND_PATH2 = dat$NUTRIENT_IND2
   )
-  mutate(out, cycle = cyc)
+
+  # Extract weight variable from NUTRIENT data
+  weights <- dat$NUTRIENT %>% 
+    select(SEQN, WTDR2D)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "SEQN") %>%
+    mutate(cycle = cyc)
 })
 
 #View(DASH_0518)
@@ -344,10 +393,11 @@ DASH_0518 <- map_dfr(cycles, function(cyc) {
 ```{r prepare and calculate aMED}
 #| eval: false
 #| include: false
-
 # Prepare aMED specific data
 AMED_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
+
+  # Calculate aMED scores
   out <- MED_NHANES_FPED(
     FPED_PATH      = dat$FPED,
     NUTRIENT_PATH  = dat$NUTRIENT,
@@ -355,7 +405,15 @@ AMED_0518 <- map_dfr(cycles, function(cyc) {
     FPED_PATH2     = dat$FPED2,
     NUTRIENT_PATH2 = dat$NUTRIENT2
   )
-  mutate(out, cycle = cyc)
+
+  # Extract weight variable from NUTRIENT data
+  weights <- dat$NUTRIENT %>% 
+    select(SEQN, WTDR2D)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "SEQN") %>%
+    mutate(cycle = cyc)
 })
 
 #View(AMED_0518)
@@ -366,10 +424,11 @@ AMED_0518 <- map_dfr(cycles, function(cyc) {
 ```{r prepare and calculate DII}
 #| eval: false
 #| include: false
-
 # Prepare DII specific data
 DII_0518 <- map_dfr(cycles, function(cyc) {
   dat <- NHANES_ALL[[cyc]]
+
+  # Calculate DII scores
   out <- DII_NHANES_FPED(
     FPED_PATH      = dat$FPED,
     NUTRIENT_PATH  = dat$NUTRIENT,
@@ -377,7 +436,15 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
     FPED_PATH2     = dat$FPED2,
     NUTRIENT_PATH2 = dat$NUTRIENT2
   )
-  mutate(out, cycle = cyc)
+
+  # Extract weight variable from NUTRIENT data
+  weights <- dat$NUTRIENT %>% 
+    select(SEQN, WTDR2D)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "SEQN") %>%
+    mutate(cycle = cyc)
 })
 
 #View(DII_0518)
@@ -388,7 +455,6 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
 ```{r prepare and calculate PHDI}
 #| eval: false
 #| include: false
-
 # ---------- PHDI ----------
 # prepare data (PHDI function requires SERV_DATA=FPED_NUTRIENT_DEMO in a dataset) 
 # DR1TKCAL: Energy (kcal) - Dietary Interview - Total Nutrient Intakes, First Day
@@ -427,7 +493,7 @@ for (cyc in cycles) {
   df_merged <- reduce(                            # merge the tables in the list one by one
     list(
     df$DEMO,
-    df$NUTRIENT %>% select(SEQN, DR1TKCAL, DR1DRSTZ),   #doulbe-check DR1DRSTZ/DR2DRSTZ
+    df$NUTRIENT %>% select(SEQN, DR1TKCAL, DR1DRSTZ, WTDR2D),   #doulbe-check DR1DRSTZ/DR2DRSTZ
     df$NUTRIENT2 %>% select(SEQN, DR2TKCAL, DR2DRSTZ)),
   ~ left_join(.x, .y, by = "SEQN"))
   NUTRIENT_DEMO_list[[cyc]] <- df_merged
@@ -485,7 +551,16 @@ PHDI_0518_d1 <- map_dfr(cycles, function(cyc) {
     ADDED_FAT_SAT_TRANS_SERV_PHDI = dat$SOLID_FATS, 
     ADDED_SUGAR_SERV_PHDI = dat$ADD_SUGARS_gram
   )
-  mutate(out, cycle = cyc)
+
+  # Extract weight variable from NUTRIENT data
+  weights <- dat %>%
+    select(SEQN, WTDR2D) %>%
+    rename(RESPONDENTID = SEQN)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "RESPONDENTID") %>%
+    mutate(cycle = cyc)
 })
 
 # PHDI day 2
@@ -512,7 +587,16 @@ PHDI_0518_d2 <- map_dfr(cycles, function(cyc) {
     ADDED_FAT_SAT_TRANS_SERV_PHDI = dat$SOLID_FATS, 
     ADDED_SUGAR_SERV_PHDI = dat$ADD_SUGARS_gram
   )
-  mutate(out, cycle = cyc)
+
+  # Extract weight variable from NUTRIENT data
+  weights <- dat %>%
+    select(SEQN, WTDR2D) %>%
+    rename(RESPONDENTID = SEQN)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "RESPONDENTID") %>%
+    mutate(cycle = cyc)
 })
 
 # Average PHDI (PHDI_0518 <- (PHDI_0518_d1 + PHDI_0518_d2)/2)
@@ -520,9 +604,9 @@ PHDI_0518_d2 <- map_dfr(cycles, function(cyc) {
 PHDI_0518_d1_d2 <- full_join(
   PHDI_0518_d1,
   PHDI_0518_d2,
-  by = c("RESPONDENTID", "GENDER", "cycle"),
+  by = c("RESPONDENTID", "GENDER", "cycle", "WTDR2D"),
   suffix = c("_d1", "_d2")
-) 
+)
 
 # List of 'PHDI_' vars (filter list of vars started as "PHDI...") 
 phdi_vars <- grep("^PHDI_", names(PHDI_0518_d1), value = TRUE) 
@@ -543,7 +627,7 @@ for (v in phdi_vars) {
 glimpse(PHDI_0518_d1_d2)
 
 PHDI_0518_mean <- PHDI_0518_d1_d2 %>%
-  select(RESPONDENTID, GENDER, cycle, ends_with("_mean")) %>%
+  select(RESPONDENTID, WTDR2D, GENDER, cycle, ends_with("_mean")) %>%
   rename(SEQN = RESPONDENTID)
 
 glimpse(PHDI_0518_mean)
@@ -554,7 +638,6 @@ glimpse(PHDI_0518_mean)
 ```{r}
 #| eval: false
 #| include: false
-
 # Map cycle 
 cyc_years <- c(
   "0506" = "2005_2006",
@@ -604,7 +687,6 @@ mort_0518 <- do.call(
 ```{r}
 #| eval: false
 #| include: false
-
 # Use only the dietary recall that is reliable and met the minimum criteria in NHANES-DR1DRSTZ ==1 OR DR2DRSTZ == 1 (James applied)
 # import GHG day 1 and day 2 data
 # Set base_path folder 
@@ -666,22 +748,30 @@ glimpse(GHG_0518)
 ```{r}
 #| eval: false
 #| include: false
-
-by_keys <- c("SEQN","cycle")
+by_keys <- c("SEQN", "cycle")
 
 # HEALTH -> (HEI, AHEI, DASH, aMED, DII, PHDI_mean) -> MORT -> GHG_0518
 nhanes_merged_0518 <- Reduce(
   function(x, y) left_join_drop_dups(x, y, by = by_keys),
   list(
     demo_health_0518,
+    mort_0518, 
+    GHG_0518,
+    PHDI_0518_mean
+  )
+)
+
+by_keys <- c("SEQN", "cycle", "WTDR2D")
+
+nhanes_merged_0518 <- Reduce(
+  function(x, y) left_join_drop_dups(x, y, by = by_keys),
+  list(
+    nhanes_merged_0518,
     HEI2020_0518,
     AHEI_0518,
     DASH_0518,
     AMED_0518,
-    DII_0518,
-    PHDI_0518_mean,
-    mort_0518, 
-    GHG_0518
+    DII_0518
   )
 )
 
@@ -694,10 +784,25 @@ write_csv(nhanes_merged_0518, "DATA/nhanes_merged_0518.csv")
 
 ```{r load nhanes_merged_0518}
 # Load nhanes_merged_0518 back from CSV
-nhanes_merged_0518 <- read_csv("DATA/nhanes_merged_0518.csv", show_col_types = FALSE)
+nhanes_merged_0518 <- read_csv("D:/Clients/VinUni/Dr. Linh/Dietary_index/DATA/nhanes_merged_0518.csv", show_col_types = FALSE)
 ```
 
 # Data cleaning
+
+## Diet score
+
+```{r}
+# Create new dietscore variable score_cat as categorical variable (Q1, Q2, Q3, Q4) for each diet score
+nhanes_merged_0518 <- nhanes_merged_0518 %>%
+  mutate(
+    HEI2020_cat = factor(ntile(HEI2020_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
+    AHEI_cat    = factor(ntile(AHEI_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
+    DASH_cat    = factor(ntile(DASH_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
+    AMED_cat    = factor(ntile(MED_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
+    DII_cat     = factor(ntile(DII_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
+    PHDI_cat    = factor(ntile(PHDI_ALL_mean, 5), levels = 1:5, labels = paste0("Q", 1:5))
+  )
+```
 
 ## Major chronic disease (MCD) (combined variable)
 
@@ -717,21 +822,57 @@ nhanes_merged_0518 <- read_csv("DATA/nhanes_merged_0518.csv", show_col_types = F
 vars_cvd <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F")
 labs_cvd <- c("CHF","CHD","Angina","MI","Stroke")
 
-# Recode: 1 = Yes, 2 = No, 7/9/. = NA
-nhanes_merged_0518[labs_cvd] <- lapply(
-  nhanes_merged_0518[vars_cvd],
-  function(x) ifelse(x == 1, 1L,
-                     ifelse(x == 2, 0L, NA_integer_)))
+# Recode each CVD variable separately using case_when: 1 = Yes, 2 = No, 7/9/. = NA
+nhanes_merged_0518 <- nhanes_merged_0518 %>%
+  mutate(
+    # CHF (Congestive heart failure)
+    CHF = case_when(
+      MCQ160B == 1 ~ 1L,
+      MCQ160B == 2 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # CHD (Coronary heart disease)
+    CHD = case_when(
+      MCQ160C == 1 ~ 1L,
+      MCQ160C == 2 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Angina
+    Angina = case_when(
+      MCQ160D == 1 ~ 1L,
+      MCQ160D == 2 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # MI (Myocardial infarction)
+    MI = case_when(
+      MCQ160E == 1 ~ 1L,
+      MCQ160E == 2 ~ 0L,
+      TRUE ~ NA_integer_
+    ),
+    
+    # Stroke
+    Stroke = case_when(
+      MCQ160F == 1 ~ 1L,
+      MCQ160F == 2 ~ 0L,
+      TRUE ~ NA_integer_
+    )
+  )
 
-# Define Major CVD
-nhanes_merged_0518$M_CVD <- apply(
-  nhanes_merged_0518[labs_cvd], 1L,
-  function(row) {
-    if (all(is.na(row))) NA_integer_                # all rows NA is NA
-    else if (any(row == 1L, na.rm = TRUE)) 1L # having at least one of disease
-    else 0L                                 
-  }
-)
+# Define Major CVD using case_when
+nhanes_merged_0518 <- nhanes_merged_0518 %>%
+  mutate(
+    M_CVD = case_when(
+      # All CVD variables are NA
+      is.na(CHF) & is.na(CHD) & is.na(Angina) & is.na(MI) & is.na(Stroke) ~ NA_integer_,
+      # At least one CVD condition is present
+      CHF == 1L | CHD == 1L | Angina == 1L | MI == 1L | Stroke == 1L ~ 1L,
+      # All measured CVD conditions are 0
+      TRUE ~ 0L
+    )
+  )
 ```
 
 ### Type 2 diabetes
@@ -973,7 +1114,10 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
       DSD010 == 2         ~ 0L,
       DSD010 %in% c(7,9)  ~ NA_integer_,
       TRUE ~ NA_integer_
-    )
+    ),
+
+    # ---- Weight ----
+    WTDR14D = WTDR2D / 7
   )
 
 ### label for covariates ###
@@ -993,8 +1137,41 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
                        "Some College or Associate's Degree","College Graduate or Above")),
     DMDMARTL_CAT = f(DMDMARTL_CAT, c(1,0), c("Married","Not Married")),
     INDFMPIR_CAT = f(INDFMPIR_CAT, 1:3, c("0–<1.30","1.30–3.49","≥3.50")),
-    BMI_CAT      = f(BMI_CAT, c(2,3,4), c("Underweight or Normal Weight","Overweight","Obese"))
+    BMI_CAT      = f(BMI_CAT, c(2,3,4), c("Underweight or Normal Weight","Overweight","Obese")),
+    SMQ_CAT      = f(SMQ_CAT, c(0,1,2), c("Never","Former","Current")),
+    PAQ_CAT      = f(PAQ_CAT, c(0,1,2,3), c("Inactive","Insufficient","Sufficient","Mod+Vigorous"))
   )
+```
+
+```{r varlabels}
+var_label(nhanes_merged_0518) <- list(
+  HEI2020_cat = "HEI-2020 quartile",
+  AHEI_cat    = "AHEI quartile",
+  DASH_cat    = "DASH quartile",
+  AMED_cat    = "aMED quartile",
+  DII_cat     = "DII quartile",
+  PHDI_cat    = "PHDI quartile",
+  M_CVD       = "Major cardiovascular disease",
+  T2D         = "Type 2 diabetes",
+  cancer      = "Cancer",
+  MCD         = "Major chronic disease",
+  MetS        = "Metabolic syndrome",
+  RIAGENDR     = "Gender",
+  RIDAGEYR_CAT = "Age group",
+  RIDRETH1     = "Race/ethnicity",
+  DMDEDUC2_CAT = "Education level",
+  DMDMARTL_CAT = "Marital status",
+  INDFMPIR_CAT = "Family income to poverty ratio",
+  BMI_CAT      = "BMI category",
+  OBESE        = "Obesity status",
+  AB_OBESE     = "Abdominal obesity",
+  SMQ_CAT      = "Smoking status",
+  ALQ130_CAT   = "Alcohol consumption (drinks per week)",
+  PAQ_CAT      = "Physical activity level",
+  TOTALKCAL_PHDI_mean = "Total energy intake (kcal/day)",
+  DSD010_CAT   = "Dietary supplement use",
+  DMDHHSIZ    = "Household size"
+)
 ```
 
 ## Exclusion criteria
@@ -1014,13 +1191,12 @@ health_cols <- c("CHF","CHD","Angina","MI","Stroke",
 
 nhanes_merged_0518_filtered <- nhanes_merged_0518 %>%
   filter(
-    RIDAGEYR >= 20,                                        # adults (>=20)
-    if_all(all_of(excluded_cols), ~ !is.na(.)),  # keep rows with NO missing in ALL excluded_cols
+    RIDAGEYR >= 20, # adults (>=20)
+    if_all(all_of(excluded_cols), ~ !is.na(.)), # keep rows with NO missing in ALL excluded_cols
     if_all(all_of(health_cols), ~ !is.na(.)) # keep rows with AT LEAST ONE non-missing in excluded_cols
-    # !(RIAGENDR == 2 & RIDEXPRG == 1)          # exclude women pregnant 
+    # !(RIAGENDR == 2 & RIDEXPRG == 1) # exclude women pregnant
   )
 
-glimpse(nhanes_merged_0518_filtered)
 # Rows: 30,883
 # Rows: 27,306
 ```
@@ -1028,19 +1204,21 @@ glimpse(nhanes_merged_0518_filtered)
 ## Missing patterns
 
 ```{r}
+#| eval: false
+#| include: false
+
 # overview
 # row, column
 dim(nhanes_merged_0518_filtered)
 
 # tổng số ô, tổng số missing, % missing
-prod(dim(nhanes_merged_0518_filtered))
-sum(is.na(nhanes_merged_0518_filtered))
-total_missing / total_cells * 100
+total_cells <- prod(dim(nhanes_merged_0518_filtered))
+total_missing <- sum(is.na(nhanes_merged_0518_filtered))
+missing_percentage <- total_missing / total_cells * 100
 
 # theo biến: n_miss, pct_miss, sorted desc
 miss_var <- naniar::miss_var_summary(nhanes_merged_0518_filtered) %>%
   arrange(desc(pct_miss))
-View(miss_var)
 miss_var %>% head(30)   # top 30 biến có missing cao
 
 # theo case (mỗi row có bao nhiêu var missing)
@@ -1113,9 +1291,7 @@ nhanes_merged_0518_filtered %>%
 
 # Results
 
-```{r}
-### Describe table for health outcomes
-# specified vars
+```{r list holders}
 covars <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F",
             "RIAGENDR","RIDAGEYR_CAT","RIDRETH1","DMDEDUC2_CAT","DMDMARTL_CAT",
             "INDFMPIR_CAT","BMI_CAT","OBESE","AB_OBESE","SMQ_CAT","PAQ_CAT",
@@ -1124,9 +1300,701 @@ covars <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F",
 covars <- c("CHF","CHD","Angina","MI","Stroke",
             "M_CVD","T2D","cancer", "MCD", "MetS")
 
+health_outcomes <- c("MCD", "M_CVD", "T2D", "cancer", "wc_high", "bp_high", "glu_high", "tg_high", "hdl_low", "MetS")
+diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
+diet_scores_cat <- c("HEI2020_cat", "AHEI_cat", "DASH_cat", "AMED_cat", "DII_cat", "PHDI_cat")
+
+# Create a mapping for outcome labels
+outcome_labels <- c(
+  "CHF" = "Congestive Heart Failure",
+  "CHD" = "Coronary Heart Disease", 
+  "Angina" = "Angina/Angina Pectoris",
+  "MI" = "Myocardial Infarction",
+  "Stroke" = "Stroke",
+  "M_CVD" = "Major Cardiovascular Disease",
+  "diabetes" = "Diabetes",
+  "T1D_flag" = "Type 1 Diabetes",
+  "T2D" = "Type 2 Diabetes",
+  "cancer" = "Cancer",
+  "wc_high" = "High Waist Circumference",
+  "bp_high" = "High Blood Pressure",
+  "glu_high" = "High Fasting Glucose",
+  "tg_high" = "High Triglycerides",
+  "hdl_low" = "Low HDL Cholesterol",
+  "MetS" = "Metabolic Syndrome",
+  "MCD" = "Major Chronic Disease"
+)
+```
+
+```{r}
+nhanes_merged_0518_filter <- nhanes_merged_0518 %>%
+  filter(
+    !is.na(WTDR14D) & !is.na(SDMVPSU) & !is.na(SDMVSTRA)
+  )
+```
+
+```{r survey design}
+PHDI_GHG_FINAL_DATA_0518_design_14yr = svydesign(
+    id = ~SDMVPSU, 
+    strata = ~SDMVSTRA,
+    weight = ~WTDR14D,
+    data = nhanes_merged_0518_filter,
+    nest = TRUE)
+
+# Subpop call
+design <- subset(PHDI_GHG_FINAL_DATA_0518_design_14yr, RIDAGEYR >= 20 & !is.na(get("HEI2020_cat")) & !is.na(get("AHEI_cat")) & !is.na(get("DASH_cat")) & !is.na(get("AMED_cat")) & !is.na(get("DII_cat")) & !is.na(get("PHDI_cat")) & !is.na(get("M_CVD")) & !is.na(get("T2D")) & !is.na(get("cancer")) & !is.na(get("MCD"))
+)
+```
+
+```{r}
+#| eval: false
+#| include: false
+
+### Describe table for health outcomes
 # table for filtered data
 health_des <- gt_cov_2col(nhanes_merged_0518_filtered, covars, digits = 1)
 health_des
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+\newpage
+
+```{r}
+#| label: tbl-table-characteristics-adjust1
+#| tbl-cap: "Adjust với gender, age, ethnic, education level, marital status,  family income to poverty ratio, smoking status, Physical activity level, Total energy intake, Alcohol consumption, Household size, Dietary supplement use"
+
+# Define outcomes and diet scores
+outcomes <- c("MCD", "M_CVD", "T2D", "cancer", "wc_high", "bp_high", "glu_high", "tg_high", "hdl_low", "MetS")
+diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
+diet_scores_cat <- c("HEI2020_cat", "AHEI_cat", "DASH_cat", "AMED_cat", "DII_cat", "PHDI_cat")
+adjust <- " + RIAGENDR + RIDAGEYR + RIDRETH1 + DMDEDUC2_CAT + DMDMARTL_CAT + INDFMPIR_CAT + SMQ_CAT + PAQ_CAT + TOTALKCAL_PHDI_mean + ALQ130_CAT + DMDHHSIZ + DSD010"
+
+# Function to create table for one outcome and one diet score
+create_outcome_table <- function(outcome, ds_cont, ds_cat, design_obj) {
+  
+  # Initialize results data frame
+  results <- data.frame(
+    Quintile = c(paste0("Q", 1:5), "Total"),
+    Median_IQR = NA_character_,
+    N_Cases = NA_character_,
+    stringsAsFactors = FALSE
+  )
+  
+  # Get underlying data for unweighted counts
+  data_df <- design_obj$variables
+  
+  # Calculate median/IQR and case counts for each quintile
+  for (q in 1:5) {
+    quintile_label <- paste0("Q", q)
+    
+    # Subset design for this quintile AND outcome cases
+    design_q <- subset(design_obj, get(ds_cat) == quintile_label & get(outcome) == 1)
+    
+    # 1. Median and IQR of continuous diet score among cases
+    median_val <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.5)[[1]]
+    q25 <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.25)[[1]]
+    q75 <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.75)[[1]]
+    results$Median_IQR[q] <- sprintf("%.1f (%.1f-%.1f)", median_val, q25, q75)
+    
+    # 2. Number of cases (unweighted)
+    n_cases_unweighted <- sum(data_df[[ds_cat]] == quintile_label & data_df[[outcome]] == 1, na.rm = TRUE)
+    results$N_Cases[q] <- sprintf("%d", n_cases_unweighted)
+  }
+  
+  # Total row calculations
+  design_total <- subset(design_obj, get(outcome) == 1)
+  median_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.5)[[1]]
+  q25_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.25)[[1]]
+  q75_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.75)[[1]]
+  results$Median_IQR[6] <- sprintf("%.1f (%.1f-%.1f)", median_total, q25_total, q75_total)
+  n_cases_total <- sum(data_df[[outcome]] == 1, na.rm = TRUE)
+  results$N_Cases[6] <- sprintf("%d", n_cases_total)
+  
+  # Run age-adjusted model once for all quintiles
+  formula_age <- as.formula(paste0(outcome, " ~ ", ds_cat, " + RIDAGEYR"))
+  model_age <- svyglm(formula_age, design = design_obj, family = quasibinomial())
+  coef_age <- summary(model_age)$coefficients
+  n_obs_age <- model_age$df.null + 1  # Number of observations in age-adjusted model
+  
+  # Extract age-adjusted ORs for each quintile
+  results$OR_Age <- NA_character_
+  results$OR_Age[1] <- "1.00 (ref)"
+  results$OR_Age[6] <- sprintf("N=%d", n_obs_age)  # Show sample size in total row
+  for (q in 2:5) {
+    row_name <- paste0(ds_cat, "Q", q)
+    if (row_name %in% rownames(coef_age)) {
+      or_age <- exp(coef_age[row_name, "Estimate"])
+      se_age <- coef_age[row_name, "Std. Error"]
+      ci_low_age <- exp(coef_age[row_name, "Estimate"] - 1.96 * se_age)
+      ci_high_age <- exp(coef_age[row_name, "Estimate"] + 1.96 * se_age)
+      results$OR_Age[q] <- sprintf("%.2f (%.2f-%.2f)", or_age, ci_low_age, ci_high_age)
+    }
+  }
+  
+  # Run fully adjusted model once for all quintiles
+  formula_full <- as.formula(paste0(
+    outcome, " ~ ", ds_cat, adjust
+  ))
+  model_full <- svyglm(formula_full, design = design_obj, family = quasibinomial())
+  coef_full <- summary(model_full)$coefficients
+  n_obs_full <- model_full$df.null + 1  # Number of observations in fully adjusted model
+  
+  # Extract fully adjusted ORs for each quintile
+  results$OR_Full <- NA_character_
+  results$OR_Full[1] <- "1.00 (ref)"
+  results$OR_Full[6] <- sprintf("N=%d", n_obs_full)  # Show sample size in total row
+  for (q in 2:5) {
+    row_name <- paste0(ds_cat, "Q", q)
+    if (row_name %in% rownames(coef_full)) {
+      or_full <- exp(coef_full[row_name, "Estimate"])
+      se_full <- coef_full[row_name, "Std. Error"]
+      ci_low_full <- exp(coef_full[row_name, "Estimate"] - 1.96 * se_full)
+      ci_high_full <- exp(coef_full[row_name, "Estimate"] + 1.96 * se_full)
+      results$OR_Full[q] <- sprintf("%.2f (%.2f-%.2f)", or_full, ci_low_full, ci_high_full)
+    }
+  }
+  
+  return(results)
+}
+
+# Create table for each outcome and diet score combination
+all_tables <- list()
+
+for (outcome in outcomes) {
+  for (i in 1:length(diet_scores_cont)) {
+    ds_cont <- diet_scores_cont[i]
+    ds_cat <- diet_scores_cat[i]
+    
+    cat("\nProcessing:", outcome, "-", ds_cont, "\n")
+    
+    tryCatch({
+      table_result <- create_outcome_table(outcome, ds_cont, ds_cat, design)
+      
+      # Add outcome and diet score labels
+      table_result <- cbind(
+        Outcome = outcome_labels[outcome],
+        Diet_Score = gsub("_ALL|_mean", "", ds_cont),
+        table_result
+      )
+      
+      all_tables[[paste(outcome, ds_cat, sep = "_")]] <- table_result
+    }, error = function(e) {
+      cat("Error:", e$message, "\n")
+    })
+  }
+}
+
+# Combine all results
+final_table <- do.call(rbind, all_tables)
+rownames(final_table) <- NULL
+
+# Create flextable
+ft <- flextable(final_table) %>%
+  set_header_labels(
+    Outcome = "Outcome",
+    Diet_Score = "Diet Score",
+    Quintile = "Quintile",
+    Median_IQR = "Median (IQR)",
+    N_Cases = "Cases (n)",
+    OR_Age = "Age-adjusted OR (95% CI)",
+    OR_Full = "Fully adjusted OR (95% CI)"
+  ) %>%
+  merge_v(j = c("Outcome", "Diet_Score")) %>%
+  theme_box() %>%
+  autofit() %>%
+  FitFlextableToPage(pgwidth = 6.5)
+
+ft
+```
+
+\newpage
+
+```{r}
+#| label: tbl-table-characteristics-adjust2
+#| tbl-cap: "Adjust với gender, age, ethnic, education level, marital status,  family income to poverty ratio, smoking status, Physical activity level, Total energy intake, Alcohol consumption, Household size, Dietary supplement use"
+
+# Define outcomes and diet scores
+outcomes <- c("MCD", "M_CVD", "T2D", "cancer", "wc_high", "bp_high", "glu_high", "tg_high", "hdl_low", "MetS")
+diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
+diet_scores_cat <- c("HEI2020_cat", "AHEI_cat", "DASH_cat", "AMED_cat", "DII_cat", "PHDI_cat")
+adjust <- " + RIAGENDR + RIDAGEYR + RIDRETH1 + DMDEDUC2_CAT + DMDMARTL_CAT + SMQ_CAT + TOTALKCAL_PHDI_mean + DMDHHSIZ"
+
+# Function to create table for one outcome and one diet score
+create_outcome_table <- function(outcome, ds_cont, ds_cat, design_obj) {
+  
+  # Initialize results data frame
+  results <- data.frame(
+    Quintile = c(paste0("Q", 1:5), "Total"),
+    Median_IQR = NA_character_,
+    N_Cases = NA_character_,
+    stringsAsFactors = FALSE
+  )
+  
+  # Get underlying data for unweighted counts
+  data_df <- design_obj$variables
+  
+  # Calculate median/IQR and case counts for each quintile
+  for (q in 1:5) {
+    quintile_label <- paste0("Q", q)
+    
+    # Subset design for this quintile AND outcome cases
+    design_q <- subset(design_obj, get(ds_cat) == quintile_label & get(outcome) == 1)
+    
+    # 1. Median and IQR of continuous diet score among cases
+    median_val <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.5)[[1]]
+    q25 <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.25)[[1]]
+    q75 <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.75)[[1]]
+    results$Median_IQR[q] <- sprintf("%.1f (%.1f-%.1f)", median_val, q25, q75)
+    
+    # 2. Number of cases (unweighted)
+    n_cases_unweighted <- sum(data_df[[ds_cat]] == quintile_label & data_df[[outcome]] == 1, na.rm = TRUE)
+    results$N_Cases[q] <- sprintf("%d", n_cases_unweighted)
+  }
+  
+  # Total row calculations
+  design_total <- subset(design_obj, get(outcome) == 1)
+  median_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.5)[[1]]
+  q25_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.25)[[1]]
+  q75_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.75)[[1]]
+  results$Median_IQR[6] <- sprintf("%.1f (%.1f-%.1f)", median_total, q25_total, q75_total)
+  n_cases_total <- sum(data_df[[outcome]] == 1, na.rm = TRUE)
+  results$N_Cases[6] <- sprintf("%d", n_cases_total)
+  
+  # Run age-adjusted model once for all quintiles
+  formula_age <- as.formula(paste0(outcome, " ~ ", ds_cat, " + RIDAGEYR"))
+  model_age <- svyglm(formula_age, design = design_obj, family = quasibinomial())
+  coef_age <- summary(model_age)$coefficients
+  n_obs_age <- model_age$df.null + 1  # Number of observations in age-adjusted model
+  
+  # Extract age-adjusted ORs for each quintile
+  results$OR_Age <- NA_character_
+  results$OR_Age[1] <- "1.00 (ref)"
+  results$OR_Age[6] <- sprintf("N=%d", n_obs_age)  # Show sample size in total row
+  for (q in 2:5) {
+    row_name <- paste0(ds_cat, "Q", q)
+    if (row_name %in% rownames(coef_age)) {
+      or_age <- exp(coef_age[row_name, "Estimate"])
+      se_age <- coef_age[row_name, "Std. Error"]
+      ci_low_age <- exp(coef_age[row_name, "Estimate"] - 1.96 * se_age)
+      ci_high_age <- exp(coef_age[row_name, "Estimate"] + 1.96 * se_age)
+      results$OR_Age[q] <- sprintf("%.2f (%.2f-%.2f)", or_age, ci_low_age, ci_high_age)
+    }
+  }
+  
+  # Run fully adjusted model once for all quintiles
+  formula_full <- as.formula(paste0(
+    outcome, " ~ ", ds_cat, adjust
+  ))
+  model_full <- svyglm(formula_full, design = design_obj, family = quasibinomial())
+  coef_full <- summary(model_full)$coefficients
+  n_obs_full <- model_full$df.null + 1  # Number of observations in fully adjusted model
+  
+  # Extract fully adjusted ORs for each quintile
+  results$OR_Full <- NA_character_
+  results$OR_Full[1] <- "1.00 (ref)"
+  results$OR_Full[6] <- sprintf("N=%d", n_obs_full)  # Show sample size in total row
+  for (q in 2:5) {
+    row_name <- paste0(ds_cat, "Q", q)
+    if (row_name %in% rownames(coef_full)) {
+      or_full <- exp(coef_full[row_name, "Estimate"])
+      se_full <- coef_full[row_name, "Std. Error"]
+      ci_low_full <- exp(coef_full[row_name, "Estimate"] - 1.96 * se_full)
+      ci_high_full <- exp(coef_full[row_name, "Estimate"] + 1.96 * se_full)
+      results$OR_Full[q] <- sprintf("%.2f (%.2f-%.2f)", or_full, ci_low_full, ci_high_full)
+    }
+  }
+  
+  return(results)
+}
+
+# Create table for each outcome and diet score combination
+all_tables <- list()
+
+for (outcome in outcomes) {
+  for (i in 1:length(diet_scores_cont)) {
+    ds_cont <- diet_scores_cont[i]
+    ds_cat <- diet_scores_cat[i]
+    
+    cat("\nProcessing:", outcome, "-", ds_cont, "\n")
+    
+    tryCatch({
+      table_result <- create_outcome_table(outcome, ds_cont, ds_cat, design)
+      
+      # Add outcome and diet score labels
+      table_result <- cbind(
+        Outcome = outcome_labels[outcome],
+        Diet_Score = gsub("_ALL|_mean", "", ds_cont),
+        table_result
+      )
+      
+      all_tables[[paste(outcome, ds_cat, sep = "_")]] <- table_result
+    }, error = function(e) {
+      cat("Error:", e$message, "\n")
+    })
+  }
+}
+
+# Combine all results
+final_table <- do.call(rbind, all_tables)
+rownames(final_table) <- NULL
+
+# Create flextable
+ft <- flextable(final_table) %>%
+  set_header_labels(
+    Outcome = "Outcome",
+    Diet_Score = "Diet Score",
+    Quintile = "Quintile",
+    Median_IQR = "Median (IQR)",
+    N_Cases = "Cases (n)",
+    OR_Age = "Age-adjusted OR (95% CI)",
+    OR_Full = "Fully adjusted OR (95% CI)"
+  ) %>%
+  merge_v(j = c("Outcome", "Diet_Score")) %>%
+  theme_box() %>%
+  autofit() %>%
+  FitFlextableToPage(pgwidth = 6.5)
+
+ft
+```
+
+\newpage
+
+```{r}
+#| eval: false
+#| include: false
+#| label: tbl-characteristics
+#| tbl-cap: "Characteristics of the study population"
+
+tables_list <- list()
+vars_to_include <- c(
+  "RIAGENDR","RIDAGEYR_CAT","RIDRETH1","DMDEDUC2_CAT","DMDMARTL_CAT",
+  "INDFMPIR_CAT","SMQ_CAT","PAQ_CAT","TOTALKCAL_PHDI_mean","ALQ130_CAT",
+  "DMDHHSIZ","DSD010_CAT"
+)
+
+for (ds in diet_scores_cat) {
+  # ensure ordered two-level factor for by
+  by_sym <- rlang::sym(ds)
+
+  tables_list[[ds]] <-
+    gtsummary::tbl_svysummary(
+      design,
+      by = !!by_sym,
+      include = tidyselect::all_of(vars_to_include),
+      type = list(DMDHHSIZ ~ "continuous"),
+      statistic = list(all_continuous() ~ "{mean} ({sd})")
+    ) |>
+    add_p() |>
+    add_overall() |>
+    as_flex_table() |>
+    FitFlextableToPage(pgwidth = 6)
+}
+
+# Display all in one table
+tables_list$HEI2020_cat
+tables_list$AHEI_cat
+tables_list$DASH_cat
+tables_list$AMED_cat
+tables_list$DII_cat
+tables_list$PHDI_cat
+```
+
+\newpage
+
+```{r}
+#| eval: false
+#| include: false
+#| label: tbl-table-multivariate-dietscore-ncds
+#| tbl-cap: "Multivariable logistic regression between diet scores and major chronic diseases (Q5 vs Q1)"
+
+out_list_multivariable <- list()
+
+for (outcome in health_outcomes) {
+  for (ds in diet_scores_cat) {
+    # Fully adjusted model with survey design
+    formula <- as.formula(paste0(
+      outcome, " ~ ", ds, adjust
+    ))
+    formula_age <- as.formula(paste0(outcome, " ~ ", ds, " + RIDAGEYR"))
+
+    model <- svyglm(formula_age, design = design, family = quasibinomial())
+    
+    tidy_model <- broom::tidy(model) %>%
+      mutate(
+        Outcome = outcome_labels[outcome],
+        Diet_Score = gsub("_cat", "", ds),
+        OR = exp(estimate),
+        Lower_CI = exp(estimate - 1.96 * std.error),
+        Upper_CI = exp(estimate + 1.96 * std.error)
+      ) %>%
+      select(Outcome, Diet_Score, term, p.value, OR, Lower_CI, Upper_CI) %>%
+      filter(grepl("Q5", term))  # Only keep Q5 coefficient
+    
+    # Use unique key combining outcome and diet score
+    out_list_multivariable[[paste(outcome, ds, sep = "_")]] <- tidy_model
+  }
+}
+results_df_multivariable <- bind_rows(out_list_multivariable)
+
+# Create flextable
+results_flextable_multivariable <- results_df_multivariable %>%
+  mutate(
+    OR = ifelse(OR > 10000, NA_real_, OR),
+    Lower_CI = ifelse(Lower_CI > 10000, NA_real_, Lower_CI),
+    Upper_CI = ifelse(Upper_CI > 10000, NA_real_, Upper_CI)
+  ) %>%
+  flextable() %>%
+  set_header_labels(
+    Outcome = "Health Outcome",
+    Diet_Score = "Diet Score",
+    term = "Comparison",
+    OR = "Odds Ratio (OR)",
+    Lower_CI = "95% CI Lower",
+    Upper_CI = "95% CI Upper",
+    p.value = "p-value"
+  ) %>%
+  colformat_double(j = c("OR", "Lower_CI", "Upper_CI"), digits = 2) %>%
+  colformat_double(j = "p.value", digits = 4) %>%
+  FitFlextableToPage(pgwidth = 6.5)
+
+results_flextable_multivariable
+```
+
+\newpage
+
+```{r}
+#| eval: false
+#| include: false
+#| label: fig-forest
+#| fig-cap: "Forest plot multivariable-adjusted logistic regression of dietary pattern scores with risk of major chronic disease"
+#| fig-width: 16
+#| fig-height: 12
+
+# Prepare forest plot data - filter to only the diet score variables (tertile 5 vs 1)
+forest_data <- results_df_multivariable %>%
+  filter(grepl("_catQ5", term, ignore.case = TRUE)) %>%
+  mutate(
+    # Create cleaner diet score labels
+    Diet_Score_Label = case_when(
+      grepl("HEI2020", Diet_Score) ~ "HEI2020",
+      grepl("AHEI", Diet_Score) ~ "AHEI",
+      grepl("DASH", Diet_Score) ~ "DASH",
+      grepl("AMED", Diet_Score) ~ "AMED",
+      grepl("DII", Diet_Score) ~ "DII",
+      grepl("PHDI", Diet_Score) ~ "PHDI",
+      TRUE ~ Diet_Score
+    ),
+
+    # Calculate the EValue
+    EValue = case_when(
+      OR >= 1 & (Outcome == "Major Cardiovascular Disease" | Outcome == "Type 2 Diabetes" | Outcome == "Cancer") ~ OR + sqrt(OR * (OR - 1)),
+      OR < 1 & (Outcome == "Major Cardiovascular Disease" | Outcome == "Type 2 Diabetes" | Outcome == "Cancer") ~ (1/OR) + sqrt((1/OR) * ((1/OR) - 1)),
+      Outcome == "Major Chronic Disease" ~ sqrt(OR)
+    ),
+
+    # Clean up diet score labels to match the example
+    Diet_Score_Label = factor(Diet_Score_Label, 
+                               levels = c("HEI2020", "AHEI", "DASH", "AMED", "DII", "PHDI")),
+    # Format OR and CI for display
+    OR_CI_text = sprintf("%.2f (%.2f-%.2f)", OR, Lower_CI, Upper_CI)
+  ) %>%
+  arrange(Outcome, Diet_Score_Label)
+
+# Create separate plots for each outcome
+plot_list <- list()
+
+for (outcome_name in unique(forest_data$Outcome)) {
+  outcome_data <- forest_data %>% filter(Outcome == outcome_name)
+  
+  # Calculate y positions for text (one for each diet score)
+  n_scores <- nrow(outcome_data)
+  y_positions <- seq(n_scores, 1, by = -1)
+  
+  # Create the plot with extended negative x-axis for text
+  p <- ggplot(outcome_data, aes(y = fct_rev(Diet_Score_Label), x = OR, color = Diet_Score_Label)) +
+    # Add vertical reference line at OR = 1
+    geom_vline(xintercept = 1, linetype = "dashed", color = "gray40", linewidth = 0.5) +
+    # Error bars for 95% CI
+    geom_errorbarh(aes(xmin = Lower_CI, xmax = Upper_CI, color = Diet_Score_Label), 
+                   height = 0.2, linewidth = 0.8) +
+    # Points for OR
+    geom_point(size = 3) +
+    # Add OR (95% CI) text in left margin (negative x values)
+    geom_text(aes(label = OR_CI_text), 
+              x = -1.6, hjust = 0, size = 3.5, color = "black", fontface = "plain") +
+    # Add E-value text in left margin (further left)
+    geom_text(aes(label = sprintf("%.2f", EValue)), 
+              x = -0.3, hjust = 0, size = 3.5, color = "black", fontface = "plain") +
+    # X-axis scale - extended to negative for text space
+    scale_x_continuous(
+      limits = c(-1.8, 2.8),
+      breaks = c(0.5, 1.0, 1.5, 2.0, 2.5),
+      labels = c("0.5", "1.0", "1.5", "2.0", "2.5"),
+      expand = c(0, 0),
+    ) +
+    # Colors for each diet score
+    scale_color_manual(values = c(
+      "HEI2020" = "#E74C3C",
+      "AHEI" = "#F39C12", 
+      "DASH" = "#27AE60",
+      "AMED" = "#95A5A6",
+      "DII" = "#3498DB",
+      "PHDI" = "#9B59B6"
+    )) +
+    # Labels
+    labs(
+      title = outcome_name,
+      x = "OR",
+      y = NULL
+    ) +
+    # Add column headers in left margin
+    annotate("text", x = -1.6, y = n_scores + 0.8, 
+             label = "OR (95% CI)", 
+             hjust = 0, size = 3.5, fontface = "bold") +
+    annotate("text", x = -0.4, y = n_scores + 0.8, 
+             label = "E-value", 
+             hjust = 0, size = 3.5, fontface = "bold") +
+    # Theme
+    theme_minimal() +
+    theme(
+      legend.position = "none",
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.line.x = element_line(color = "black", linewidth = 0.5),
+      axis.ticks.x = element_line(color = "black", linewidth = 0.5),
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      axis.title.x = element_text(size = 10, face = "bold"),
+      axis.text.y = element_text(size = 10, face = "bold"),
+      axis.text.x = element_text(size = 9),
+      plot.margin = margin(t = 20, r = 10, b = 10, l = 10)
+    )
+  
+  plot_list[[outcome_name]] <- p
+}
+
+# Arrange plots in a grid
+gridExtra::grid.arrange(grobs = plot_list, ncol = 2)
+```
+
+\newpage
+
+```{r}
+#| eval: false
+#| include: false
+#| label: fig-splines
+#| fig-cap: "Multivariable-adjusted spline analysis of dietary pattern scores with risk of major chronic disease"
+#| fig-width: 16
+#| fig-height: 12
+
+# Define diet scores and outcome
+outcome <- "mortstat"
+diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
+
+# Define nice labels for plotting
+score_labels <- c(
+  "HEI2020_ALL" = "HEI-2020",
+  "AHEI_ALL" = "AHEI", 
+  "DASH_ALL" = "DASH",
+  "MED_ALL" = "Mediterranean",
+  "DII_ALL" = "DII",
+  "PHDI_ALL_mean" = "PHDI"
+)
+
+# Initialize list to store all plot data
+all_plot_data <- list()
+
+# Loop through each dietary score
+for (ds in diet_scores_cont) {
+  
+  # Create formula with current dietary score (continuous, no splines)
+  formula_cox <- as.formula(paste("Surv(RIDAGEYR, ", "mortstat > 0", ") ~", ds, " + RIAGENDR + RIDRETH1 + DMDEDUC2_CAT + DMDMARTL_CAT + INDFMPIR_CAT + SMQ_CAT + TOTALKCAL_PHDI_mean + ALQ130_CAT + DMDHHSIZ + DSD010"))
+  
+  # Fit the Cox model
+  model_cox <- svycoxph(formula_cox, design = design)
+  
+  # Extract coefficient and confidence interval for the dietary score
+  coef_summary <- summary(model_cox)
+  diet_coef_row <- which(rownames(coef_summary$coefficients) == ds)
+  
+  if (length(diet_coef_row) > 0) {
+    # Get coefficient, HR, and confidence intervals
+    coef_estimate <- coef_summary$coefficients[diet_coef_row, "coef"]
+    hr_estimate <- exp(coef_estimate)
+    hr_lower <- coef_summary$conf.int[diet_coef_row, "lower .95"]
+    hr_upper <- coef_summary$conf.int[diet_coef_row, "upper .95"]
+    
+    # Generate score range
+    score_range <- seq(min(nhanes_merged_0518_filtered[[ds]], na.rm = TRUE),
+                      max(nhanes_merged_0518_filtered[[ds]], na.rm = TRUE), 
+                      length.out = 100)
+    
+    # Calculate HR for each score value (assuming linear relationship)
+    # HR = exp(coefficient * (score - reference_score))
+    # Using minimum score as reference (HR = 1 at minimum)
+    reference_score <- min(nhanes_merged_0518_filtered[[ds]], na.rm = TRUE)
+    
+    plot_data <- data.frame(
+      score_value = score_range,
+      hr = exp(coef_estimate * (score_range - reference_score)),
+      hr_lower = exp((coef_estimate - 1.96 * coef_summary$coefficients[diet_coef_row, "se(coef)"]) * 
+                    (score_range - reference_score)),
+      hr_upper = exp((coef_estimate + 1.96 * coef_summary$coefficients[diet_coef_row, "se(coef)"]) * 
+                    (score_range - reference_score)),
+      diet_score = score_labels[ds]
+    )
+    
+    all_plot_data[[ds]] <- plot_data
+  }
+}
+
+# Combine all data
+combined_data <- bind_rows(all_plot_data)
+
+# Create the combined plot
+ggplot(combined_data, aes(x = score_value, y = hr, color = diet_score)) +
+  geom_line(linewidth = 1.2) +
+  geom_ribbon(aes(ymin = hr_lower, ymax = hr_upper, fill = diet_score), alpha = 0.2, color = NA) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "black", alpha = 0.7) +
+  facet_wrap(~ diet_score, scales = "free_x", ncol = 3) +
+  labs(
+    x = "Dietary Score",
+    y = "Hazard Ratio (HR)"
+  ) +
+  scale_color_brewer(type = "qual", palette = "Set2", guide = "none") +
+  scale_fill_brewer(type = "qual", palette = "Set2", guide = "none") +
+  scale_y_continuous(
+    limits = c(0, 2),
+    breaks = seq(0.5, 2, by = 0.25),
+    expand = c(0.02, 0)
+  ) +
+  scale_x_continuous(expand = c(0.02, 0)) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 12),
+    axis.title = element_text(size = 11),
+    axis.text = element_text(size = 9),
+    strip.text = element_text(size = 11, face = "bold"),
+    panel.grid.minor = element_blank(),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.5)
+  )
+```
+
+\newpage
+
+```{r}
+#| eval: false
+#| include: false
+
+# Test each covariate individually
+test_vars <- c("RIAGENDR", "RIDAGEYR_CAT", "RIDRETH1", "DMDEDUC2_CAT", "DMDMARTL_CAT", "INDFMPIR_CAT", "SMQ_CAT", "PAQ_CAT", "TOTALKCAL_PHDI_mean", "ALQ130", "DSD010_CAT", "DMDHHSIZ")
+
+for(var in test_vars) {
+  tryCatch({
+    formula_test <- as.formula(paste("CHF ~", var))
+    model_test <- glm(formula_test, data = nhanes_merged_0518_filtered, family = binomial)
+    cat("✓", var, "is OK\n")
+  }, error = function(e) {
+    cat("✗", var, "has an issue:", e$message, "\n")
+  })
+}
+```
