@@ -792,7 +792,7 @@ nhanes_merged_0518 <- read_csv("D:/Clients/VinUni/Dr. Linh/Dietary_index/DATA/nh
 ## Diet score
 
 ```{r}
-# Create new dietscore variable score_cat as categorical variable (Q1, Q2, Q3, Q4) for each diet score
+# Create new dietscore variable score_cat as categorical variable (Q1, Q2, Q3, Q4, Q5) for each diet score
 nhanes_merged_0518 <- nhanes_merged_0518 %>%
   mutate(
     HEI2020_cat = factor(ntile(HEI2020_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
@@ -1359,158 +1359,8 @@ health_des
 \newpage
 
 ```{r}
-#| label: tbl-table-characteristics-adjust1
-#| tbl-cap: "Adjust với gender, age, ethnic, education level, marital status,  family income to poverty ratio, smoking status, Physical activity level, Total energy intake, Alcohol consumption, Household size, Dietary supplement use"
-
-# Define outcomes and diet scores
-outcomes <- c("MCD", "M_CVD", "T2D", "cancer", "wc_high", "bp_high", "glu_high", "tg_high", "hdl_low", "MetS")
-diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
-diet_scores_cat <- c("HEI2020_cat", "AHEI_cat", "DASH_cat", "AMED_cat", "DII_cat", "PHDI_cat")
-adjust <- " + RIAGENDR + RIDAGEYR + RIDRETH1 + DMDEDUC2_CAT + DMDMARTL_CAT + INDFMPIR_CAT + SMQ_CAT + PAQ_CAT + TOTALKCAL_PHDI_mean + ALQ130_CAT + DMDHHSIZ + DSD010"
-
-# Function to create table for one outcome and one diet score
-create_outcome_table <- function(outcome, ds_cont, ds_cat, design_obj) {
-  
-  # Initialize results data frame
-  results <- data.frame(
-    Quintile = c(paste0("Q", 1:5), "Total"),
-    Median_IQR = NA_character_,
-    N_Cases = NA_character_,
-    stringsAsFactors = FALSE
-  )
-  
-  # Get underlying data for unweighted counts
-  data_df <- design_obj$variables
-  
-  # Calculate median/IQR and case counts for each quintile
-  for (q in 1:5) {
-    quintile_label <- paste0("Q", q)
-    
-    # Subset design for this quintile AND outcome cases
-    design_q <- subset(design_obj, get(ds_cat) == quintile_label & get(outcome) == 1)
-    
-    # 1. Median and IQR of continuous diet score among cases
-    median_val <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.5)[[1]]
-    q25 <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.25)[[1]]
-    q75 <- svyquantile(as.formula(paste0("~", ds_cont)), design_q, quantiles = 0.75)[[1]]
-    results$Median_IQR[q] <- sprintf("%.1f (%.1f-%.1f)", median_val, q25, q75)
-    
-    # 2. Number of cases (unweighted)
-    n_cases_unweighted <- sum(data_df[[ds_cat]] == quintile_label & data_df[[outcome]] == 1, na.rm = TRUE)
-    results$N_Cases[q] <- sprintf("%d", n_cases_unweighted)
-  }
-  
-  # Total row calculations
-  design_total <- subset(design_obj, get(outcome) == 1)
-  median_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.5)[[1]]
-  q25_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.25)[[1]]
-  q75_total <- svyquantile(as.formula(paste0("~", ds_cont)), design_total, quantiles = 0.75)[[1]]
-  results$Median_IQR[6] <- sprintf("%.1f (%.1f-%.1f)", median_total, q25_total, q75_total)
-  n_cases_total <- sum(data_df[[outcome]] == 1, na.rm = TRUE)
-  results$N_Cases[6] <- sprintf("%d", n_cases_total)
-  
-  # Run age-adjusted model once for all quintiles
-  formula_age <- as.formula(paste0(outcome, " ~ ", ds_cat, " + RIDAGEYR"))
-  model_age <- svyglm(formula_age, design = design_obj, family = quasibinomial())
-  coef_age <- summary(model_age)$coefficients
-  n_obs_age <- model_age$df.null + 1  # Number of observations in age-adjusted model
-  
-  # Extract age-adjusted ORs for each quintile
-  results$OR_Age <- NA_character_
-  results$OR_Age[1] <- "1.00 (ref)"
-  results$OR_Age[6] <- sprintf("N=%d", n_obs_age)  # Show sample size in total row
-  for (q in 2:5) {
-    row_name <- paste0(ds_cat, "Q", q)
-    if (row_name %in% rownames(coef_age)) {
-      or_age <- exp(coef_age[row_name, "Estimate"])
-      se_age <- coef_age[row_name, "Std. Error"]
-      ci_low_age <- exp(coef_age[row_name, "Estimate"] - 1.96 * se_age)
-      ci_high_age <- exp(coef_age[row_name, "Estimate"] + 1.96 * se_age)
-      results$OR_Age[q] <- sprintf("%.2f (%.2f-%.2f)", or_age, ci_low_age, ci_high_age)
-    }
-  }
-  
-  # Run fully adjusted model once for all quintiles
-  formula_full <- as.formula(paste0(
-    outcome, " ~ ", ds_cat, adjust
-  ))
-  model_full <- svyglm(formula_full, design = design_obj, family = quasibinomial())
-  coef_full <- summary(model_full)$coefficients
-  n_obs_full <- model_full$df.null + 1  # Number of observations in fully adjusted model
-  
-  # Extract fully adjusted ORs for each quintile
-  results$OR_Full <- NA_character_
-  results$OR_Full[1] <- "1.00 (ref)"
-  results$OR_Full[6] <- sprintf("N=%d", n_obs_full)  # Show sample size in total row
-  for (q in 2:5) {
-    row_name <- paste0(ds_cat, "Q", q)
-    if (row_name %in% rownames(coef_full)) {
-      or_full <- exp(coef_full[row_name, "Estimate"])
-      se_full <- coef_full[row_name, "Std. Error"]
-      ci_low_full <- exp(coef_full[row_name, "Estimate"] - 1.96 * se_full)
-      ci_high_full <- exp(coef_full[row_name, "Estimate"] + 1.96 * se_full)
-      results$OR_Full[q] <- sprintf("%.2f (%.2f-%.2f)", or_full, ci_low_full, ci_high_full)
-    }
-  }
-  
-  return(results)
-}
-
-# Create table for each outcome and diet score combination
-all_tables <- list()
-
-for (outcome in outcomes) {
-  for (i in 1:length(diet_scores_cont)) {
-    ds_cont <- diet_scores_cont[i]
-    ds_cat <- diet_scores_cat[i]
-    
-    cat("\nProcessing:", outcome, "-", ds_cont, "\n")
-    
-    tryCatch({
-      table_result <- create_outcome_table(outcome, ds_cont, ds_cat, design)
-      
-      # Add outcome and diet score labels
-      table_result <- cbind(
-        Outcome = outcome_labels[outcome],
-        Diet_Score = gsub("_ALL|_mean", "", ds_cont),
-        table_result
-      )
-      
-      all_tables[[paste(outcome, ds_cat, sep = "_")]] <- table_result
-    }, error = function(e) {
-      cat("Error:", e$message, "\n")
-    })
-  }
-}
-
-# Combine all results
-final_table <- do.call(rbind, all_tables)
-rownames(final_table) <- NULL
-
-# Create flextable
-ft <- flextable(final_table) %>%
-  set_header_labels(
-    Outcome = "Outcome",
-    Diet_Score = "Diet Score",
-    Quintile = "Quintile",
-    Median_IQR = "Median (IQR)",
-    N_Cases = "Cases (n)",
-    OR_Age = "Age-adjusted OR (95% CI)",
-    OR_Full = "Fully adjusted OR (95% CI)"
-  ) %>%
-  merge_v(j = c("Outcome", "Diet_Score")) %>%
-  theme_box() %>%
-  autofit() %>%
-  FitFlextableToPage(pgwidth = 6.5)
-
-ft
-```
-
-\newpage
-
-```{r}
-#| label: tbl-table-characteristics-adjust2
-#| tbl-cap: "Adjust với gender, age, ethnic, education level, marital status,  family income to poverty ratio, smoking status, Physical activity level, Total energy intake, Alcohol consumption, Household size, Dietary supplement use"
+#| label: tbl-table-characteristics-adjust
+#| tbl-cap: "Adjust với gender, age, ethnic, education level, marital status, smoking status, Total energy intake, Household size"
 
 # Define outcomes and diet scores
 outcomes <- c("MCD", "M_CVD", "T2D", "cancer", "wc_high", "bp_high", "glu_high", "tg_high", "hdl_low", "MetS")
@@ -1561,7 +1411,7 @@ create_outcome_table <- function(outcome, ds_cont, ds_cat, design_obj) {
   
   # Run age-adjusted model once for all quintiles
   formula_age <- as.formula(paste0(outcome, " ~ ", ds_cat, " + RIDAGEYR"))
-  model_age <- svyglm(formula_age, design = design_obj, family = quasibinomial())
+  model_age <- svyglm(formula_age, design = design_obj, family = poisson(link = log))
   coef_age <- summary(model_age)$coefficients
   n_obs_age <- model_age$df.null + 1  # Number of observations in age-adjusted model
   
@@ -1716,7 +1566,7 @@ for (outcome in health_outcomes) {
     ))
     formula_age <- as.formula(paste0(outcome, " ~ ", ds, " + RIDAGEYR"))
 
-    model <- svyglm(formula_age, design = design, family = quasibinomial())
+    model <- svyglm(formula_age, design = design, family = poisson(link = log))
     
     tidy_model <- broom::tidy(model) %>%
       mutate(
