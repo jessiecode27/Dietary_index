@@ -1403,7 +1403,7 @@ nhanes_merged_0518_filter <- nhanes_merged_0518_filter %>%
          PHDI_LEGUMES_kcal_adjusted = adjust_for_energy("PHDI_LEGUMES_mean"),
          PHDI_SOY_kcal_adjusted = adjust_for_energy("PHDI_SOY_mean"),
 
-         PHDI_ALL_kcal_adjusted = PHDI_WGRAIN_kcal_adjusted + 
+         PHDI_ALL_kcal_adjusted = PHDI_WGRAIN_kcal_adjusted +
            PHDI_STARCHY_VEG_kcal_adjusted + 
            PHDI_VEG_kcal_adjusted + 
            PHDI_FRT_kcal_adjusted + 
@@ -1467,6 +1467,10 @@ create_outcome_table <- function(outcome, ds_cont, ds_cat, design_obj) {
   # Get underlying data for unweighted counts
   data_df <- design_obj$variables
   
+  # First, calculate total weighted cases across all quintiles for distribution calculation
+  design_all_cases <- subset(design_obj, get(outcome) == 1)
+  total_weighted_cases <- sum(weights(design_all_cases))
+  
   # Calculate median/IQR and case counts for each quintile
   for (q in 1:5) {
     quintile_label <- paste0("Q", q)
@@ -1484,9 +1488,11 @@ create_outcome_table <- function(outcome, ds_cont, ds_cat, design_obj) {
     n_cases_unweighted <- sum(data_df[[ds_cat]] == quintile_label & data_df[[outcome]] == 1, na.rm = TRUE)
     results$N_Cases[q] <- sprintf("%d", n_cases_unweighted)
 
-    # 3. Number of cases (weighted)
+    # 3. Distribution of cases across quintiles (weighted percentage)
     design_quintile_cases <- subset(design_obj, get(ds_cat) == quintile_label & get(outcome) == 1)
-    results$N_Cases_weighted[q] <- sprintf("%.0f", sum(weights(design_quintile_cases)))
+    weighted_cases_in_quintile <- sum(weights(design_quintile_cases))
+    weighted_pct <- (weighted_cases_in_quintile / total_weighted_cases) * 100
+    results$Weighted_Pct[q] <- sprintf("%.2f%%", weighted_pct)
   }
   
   # Total row calculations
@@ -1498,9 +1504,8 @@ create_outcome_table <- function(outcome, ds_cont, ds_cat, design_obj) {
   n_cases_total <- sum(data_df[[outcome]] == 1, na.rm = TRUE)
   results$N_Cases[6] <- sprintf("%d", n_cases_total)
   
-  # Weighted total
-  design_total_cases <- subset(design_obj, get(outcome) == 1)
-  results$N_Cases_weighted[6] <- sprintf("%.0f", sum(weights(design_total_cases)))
+  # Total distribution should be 100%
+  results$Weighted_Pct[6] <- "100.00%"
   
   # Run age-adjusted model once for all quintiles
   formula_age <- as.formula(paste0(outcome, " ~ ", ds_cat, " + RIDAGEYR"))
@@ -1586,7 +1591,7 @@ ft <- flextable(final_table) %>%
     Outcome = "Outcome",
     Diet_Score = "Diet Score",
     Quintile = "Quintile",
-    Median_IQR = "Median (IQR)",
+    Weighted_Pct = "Weighted %",
     N_Cases = "Cases (n)",
     N_Cases_weighted = "Cases (weighted n)",
     OR_Age = "Age-adjusted OR (95% CI)",
@@ -1989,8 +1994,8 @@ for (ds_cat in diet_scores_cat) {
   plot_data <- merge(hr_data, ghg_data, by = "Quintile")
   
   # Set fixed axis ranges
-  hr_min <- 0.5
-  hr_max <- 1.75
+  hr_min <- 0.4
+  hr_max <- 2.0
   ghg_min <- 1
   ghg_max <- 6
   
@@ -2001,21 +2006,22 @@ for (ds_cat in diet_scores_cat) {
   # Create dual-axis plot
   p <- ggplot(plot_data, aes(x = Quintile)) +
     # HR line (red)
-    geom_line(aes(y = HR), color = "#E31A1C", linewidth = 1) +
-    geom_point(aes(y = HR), color = "#E31A1C", size = 3, shape = 16) +
-    geom_errorbar(aes(ymin = HR_lower, ymax = HR_upper), 
-                  color = "#E31A1C", width = 0.15, linewidth = 0.8) +
-    
-    # GHG line (blue) - transformed to HR scale
-    geom_line(aes(y = GHG * coef_scale + intercept_scale), 
-              color = "#1F78B4", linewidth = 1) +
-    geom_point(aes(y = GHG * coef_scale + intercept_scale), 
-               color = "#1F78B4", size = 3, shape = 16) +
+    geom_line(aes(y = HR, color = "HR for all-cause mortality"), linewidth = 1) +
+    geom_point(aes(y = HR, color = "HR for all-cause mortality"), size = 3, shape = 16) +
+    geom_errorbar(aes(ymin = HR_lower, ymax = HR_upper, color = "HR for all-cause mortality"), 
+                  width = 0.15, linewidth = 0.8) +
+    # GHG line (blue)
+    geom_line(aes(y = GHG * coef_scale + intercept_scale, color = "GHG Emissions"), linewidth = 1) +
+    geom_point(aes(y = GHG * coef_scale + intercept_scale, color = "GHG Emissions"), size = 3, shape = 16) +
     geom_errorbar(aes(ymin = GHG_lower * coef_scale + intercept_scale,
-                      ymax = GHG_upper * coef_scale + intercept_scale), 
-                  color = "#1F78B4", width = 0.15, linewidth = 0.8) +
-    
-    # Primary y-axis (HR)
+                      ymax = GHG_upper * coef_scale + intercept_scale,
+                      color = "GHG Emissions"), 
+                  width = 0.15, linewidth = 0.8) +
+    scale_color_manual(
+      name = "",
+      values = c("HR for all-cause mortality" = "#E31A1C", 
+                 "GHG Emissions" = "#1F78B4")
+    ) +
     scale_y_continuous(
       name = "HR for all-cause mortality",
       limits = c(hr_min, hr_max),
@@ -2026,56 +2032,58 @@ for (ds_cat in diet_scores_cat) {
         breaks = seq(ghg_min, ghg_max, 1)
       )
     ) +
-    
-    # X-axis
     scale_x_continuous(
       breaks = 1:5,
       labels = paste0("Q", 1:5)
     ) +
-    
     labs(
       title = diet_score_labels[ds_cat],
       x = paste("Quintiles of", diet_score_labels[ds_cat])
     ) +
-    
-    # Theme
     theme_minimal(base_size = 10) +
     theme(
       plot.title = element_text(size = 11, face = "bold", hjust = 0.5),
       axis.title = element_text(size = 9),
-      axis.text = element_text(size = 8)
+      axis.text = element_text(size = 8),
+      legend.position = "none"
     )
-  
-  # Add legend
-  p <- p + 
-    annotate("segment", x = 1.1, xend = 1.4, y = min(plot_data$HR_lower), 
-             yend = min(plot_data$HR_lower), 
-             color = "#E31A1C", linewidth = 1) +
-    annotate("point", x = 1.25, y = min(plot_data$HR_lower), 
-             color = "#E31A1C", size = 2) +
-    annotate("text", x = 1.45, y = min(plot_data$HR_lower), 
-             label = "HR", hjust = 0, size = 2.5) +
-    
-    annotate("segment", x = 2.5, xend = 2.8, y = min(plot_data$HR_lower), 
-             yend = min(plot_data$HR_lower), 
-             color = "#1F78B4", linewidth = 1) +
-    annotate("point", x = 2.65, y = min(plot_data$HR_lower), 
-             color = "#1F78B4", size = 2) +
-    annotate("text", x = 2.85, y = min(plot_data$HR_lower), 
-             label = "GHG", hjust = 0, size = 2.5)
   
   plot_list[[ds_cat]] <- p
 }
 
-# Arrange all plots in a grid
-gridExtra::grid.arrange(grobs = plot_list, ncol = 2)
+# Create a shared legend
+legend_plot <- ggplot(plot_data, aes(x = Quintile)) +
+  geom_line(aes(y = HR, color = "HR for all-cause mortality"), linewidth = 1) +
+  geom_line(aes(y = GHG * coef_scale + intercept_scale, color = "GHG Emissions"), linewidth = 1) +
+  scale_color_manual(
+    name = "",
+    values = c("HR for all-cause mortality" = "#E31A1C", 
+               "GHG Emissions" = "#1F78B4")
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "bottom",
+    legend.text = element_text(size = 10),
+    legend.key.width = unit(1.5, "cm")
+  )
+
+# Extract legend
+legend <- cowplot::get_legend(legend_plot)
+
+# Arrange all plots in a grid with shared legend at bottom
+gridExtra::grid.arrange(
+  gridExtra::arrangeGrob(grobs = plot_list, ncol = 2),
+  legend,
+  ncol = 1,
+  heights = c(10, 0.5)
+)
 ```
 
 ```{r}
 #| label: fig-diet-score-trend
 #| fig-cap: "Diet score trends over NHANES cycles"
 #| fig-width: 8
-#| fig-height: 6
+#| fig-height: 12
 
 PHDI_GHG_FINAL_DATA_0518_design = svydesign(
     id = ~SDMVPSU, 
@@ -2116,32 +2124,43 @@ for (ds in diet_scores_cont) {
 diet_survey_summary <- bind_rows(all_diet_summaries) %>%
   mutate(
     diet_score_label = case_when(
-      diet_score == "HEI2020_ALL" ~ "HEI-2020",
-      diet_score == "AHEI_ALL" ~ "AHEI",
-      diet_score == "DASH_ALL" ~ "DASH",
-      diet_score == "MED_ALL" ~ "Mediterranean",
-      diet_score == "DII_ALL" ~ "DII",
-      diet_score == "PHDI_ALL_mean" ~ "PHDI"
-    )
+      diet_score == "HEI2020_ALL" ~ "Healthy Eating Index 2020 (HEI-2020)",
+      diet_score == "AHEI_ALL" ~ "Alternate Healthy Eating Index (AHEI)",
+      diet_score == "DASH_ALL" ~ "Dietary Approaches to Stop Hypertension (DASH)",
+      diet_score == "MED_ALL" ~ "Alternate Mediterranean Diet (aMED)",
+      diet_score == "DII_ALL" ~ "Dietary Inflammatory Index (DII)",
+      diet_score == "PHDI_ALL_mean" ~ "Planetary Health Diet Index (PHDI)"
+    ),
+    cycle_label = case_when(
+      cycle == "0506" ~ "2005-2006",
+      cycle == "0708" ~ "2007-2008",
+      cycle == "0910" ~ "2009-2010",
+      cycle == "1112" ~ "2011-2012",
+      cycle == "1314" ~ "2013-2014",
+      cycle == "1516" ~ "2015-2016",
+      cycle == "1718" ~ "2017-2018",
+      TRUE ~ cycle
+    ),
+    cycle_label = factor(cycle_label, levels = c("2005-2006", "2007-2008", "2009-2010", 
+                                                   "2011-2012", "2013-2014", "2015-2016", "2017-2018"))
   )
 
 # Plot all diet scores with error bars 
-diet_trend <- ggplot(diet_survey_summary, aes(x = cycle, y = SE_score, color = diet_score_label, group = diet_score_label)) +
+diet_trend <- ggplot(diet_survey_summary, aes(x = cycle_label, y = SE_score, color = diet_score_label, group = diet_score_label)) +
   geom_line(linewidth = 1) +
   geom_point(size = 3) +
   geom_errorbar(aes(ymin = SE_score - se, ymax = SE_score + se), width = 0.2) +
   theme_bw() +
-  labs(x = "NHANES Cycle", y = "Mean Diet Score", color = "Diet Score") +
+  labs(x = "NHANES Cycle", y = "Mean Diet Score", color = "Dietary Pattern Score") +
   scale_color_brewer(type = "qual", palette = "Set2") +
   theme(plot.title = element_text(size = 22),
         axis.title.x = element_text(size = 18),
         axis.title.y = element_text(size = 18),
-        axis.text.x = element_text(size = 14, angle = 90, hjust = 1),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
         axis.text.y = element_text(size = 14),
         legend.text = element_text(size = 14),
         legend.title = element_text(size = 16),
-        legend.position = "right",
-        aspect.ratio = 0.5)
+        legend.position = "right")
 
 diet_trend
 ```
@@ -2238,15 +2257,15 @@ or_df <- or_df %>%
     OR_display = ifelse(!is.na(OR), sprintf("%.2f", OR), "")
   )
 
-# Create heatmap with green (OR > 1) and pink (OR < 1) colors
+# Create heatmap
 ggplot(or_df, aes(x = Outcome, y = Food_Group, fill = OR)) +
   geom_tile(color = "white", linewidth = 0.5) +
   geom_text(aes(label = ifelse(Significant, paste0(OR_display, "*"), OR_display)), 
             size = 2.8, color = "black") +
   scale_fill_gradient2(
-    low = "#E91E63",     # Pink for OR < 1 (protective)
-    mid = "white", 
-    high = "#4CAF50",    # Green for OR > 1 (risk)
+    low = "#4CAF50",
+    mid = "white",
+    high = "#E91E63",
     midpoint = 1,
     limits = c(0.1, 2.0),
     na.value = "grey90",
@@ -2270,5 +2289,88 @@ ggplot(or_df, aes(x = Outcome, y = Food_Group, fill = OR)) +
 ```
 
 ```{r}
+#| label: fig-components-year
+#| fig-cap: "PHDI component trends over NHANES cycles"
+#| fig-width: 12
+#| fig-height: 8
 
+# Define PHDI components
+phdi_components <- c(
+  "PHDI_WGRAIN_mean", "PHDI_STARCHY_VEG_mean", "PHDI_VEG_mean", "PHDI_FRT_mean",
+  "PHDI_DAIRY_mean", "PHDI_REDPROC_MEAT_mean", "PHDI_POULTRY_mean", "PHDI_EGG_mean",
+  "PHDI_FISH_mean", "PHDI_NUTS_mean", "PHDI_LEGUMES_mean", "PHDI_SOY_mean",
+  "PHDI_ADDED_FAT_UNSAT_mean", "PHDI_ADDED_FAT_SAT_mean", "PHDI_ADDED_SUGAR_mean"
+)
+
+# Calculate weighted mean and SE of PHDI components by cycle
+all_component_summaries <- list()
+
+for (comp in phdi_components) {
+  # Get summary for this component
+  comp_summary <- svyby(as.formula(paste0("~", comp)), ~ cycle, design2y, svymean, na.rm = TRUE) %>%
+    as.data.frame() %>%
+    rename(mean_score = !!sym(comp), SE_score = !!sym(comp)) %>%
+    mutate(component = comp)
+  
+  all_component_summaries[[comp]] <- comp_summary
+}
+
+# Combine all summaries
+component_survey_summary <- bind_rows(all_component_summaries) %>%
+  mutate(
+    component_label = case_when(
+      component == "PHDI_WGRAIN_mean" ~ "Whole Grains",
+      component == "PHDI_STARCHY_VEG_mean" ~ "Starchy Vegetables",
+      component == "PHDI_VEG_mean" ~ "Vegetables",
+      component == "PHDI_FRT_mean" ~ "Fruits",
+      component == "PHDI_DAIRY_mean" ~ "Dairy",
+      component == "PHDI_REDPROC_MEAT_mean" ~ "Red/Processed Meat",
+      component == "PHDI_POULTRY_mean" ~ "Poultry",
+      component == "PHDI_EGG_mean" ~ "Eggs",
+      component == "PHDI_FISH_mean" ~ "Fish",
+      component == "PHDI_NUTS_mean" ~ "Nuts",
+      component == "PHDI_LEGUMES_mean" ~ "Legumes",
+      component == "PHDI_SOY_mean" ~ "Soy",
+      component == "PHDI_ADDED_FAT_UNSAT_mean" ~ "Unsaturated Fat",
+      component == "PHDI_ADDED_FAT_SAT_mean" ~ "Saturated Fat",
+      component == "PHDI_ADDED_SUGAR_mean" ~ "Added Sugar"
+    ),
+    cycle_label = case_when(
+      cycle == "0506" ~ "2005-2006",
+      cycle == "0708" ~ "2007-2008",
+      cycle == "0910" ~ "2009-2010",
+      cycle == "1112" ~ "2011-2012",
+      cycle == "1314" ~ "2013-2014",
+      cycle == "1516" ~ "2015-2016",
+      cycle == "1718" ~ "2017-2018",
+      TRUE ~ cycle
+    ),
+    cycle_label = factor(cycle_label, levels = c("2005-2006", "2007-2008", "2009-2010", 
+                                                   "2011-2012", "2013-2014", "2015-2016", "2017-2018"))
+  )
+
+# Plot all PHDI components with error bars
+component_trend <- ggplot(component_survey_summary, aes(x = cycle_label, y = SE_score, color = component_label, group = component_label)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = SE_score - se, ymax = SE_score + se), width = 0.2) +
+  theme_bw() +
+  labs(x = "NHANES Cycle", y = "Mean Component Score", color = "PHDI Component") +
+  scale_color_manual(values = c(
+    "Whole Grains" = "#1F78B4", "Starchy Vegetables" = "#33A02C", "Vegetables" = "#E31A1C",
+    "Fruits" = "#FF7F00", "Dairy" = "#6A3D9A", "Red/Processed Meat" = "#B15928",
+    "Poultry" = "#A6CEE3", "Eggs" = "#B2DF8A", "Fish" = "#FB9A99",
+    "Nuts" = "#FDBF6F", "Legumes" = "#CAB2D6", "Soy" = "#FFFF99",
+    "Unsaturated Fat" = "#8DD3C7", "Saturated Fat" = "#BEBADA", "Added Sugar" = "#FB8072"
+  )) +
+  theme(plot.title = element_text(size = 22),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "right")
+
+component_trend
 ```
