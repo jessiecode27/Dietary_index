@@ -158,6 +158,224 @@ adjust_for_energy <- function(var){
   # return the predicted variable
   return(predicted)
 }
+
+ACS2020_NHANES_FPED = function(FPED_IND_PATH = NULL, NUTRIENT_IND_PATH = NULL, FPED_IND_PATH2 = NULL, NUTRIENT_IND_PATH2 = NULL, SSB_code = NULL) {
+    # stop if the input data is not provided for any day
+    if (is.null(FPED_IND_PATH) & is.null(NUTRIENT_IND_PATH) & is.null(FPED_IND_PATH2) & is.null(NUTRIENT_IND_PATH2)) {
+        stop("Please provide the file path for the FPED and NUTRIENT data, day 1 or day 2 or day 1 and day 2.")
+    }
+
+    if (is.null(SSB_code)) {
+        # load the SSB codes from 17-18 FNDDS file as default
+        data("SSB_FNDDS_1718")
+        SSB = unique(SSB_FNDDS_1718$`Food code`)
+        message("Since no SSB code is provided, the default SSB code from 17-18 FNDDS file is used.")
+    } else {
+        # use the provided SSB code
+        SSB = SSB_code
+    }
+
+    # if only day 1 data is provided
+    if (!is.null(FPED_IND_PATH) & !is.null(NUTRIENT_IND_PATH)) {
+        if (is.character(FPED_IND_PATH) == TRUE) {
+            FPED_IND = read_sas(FPED_IND_PATH)
+        } else {
+            FPED_IND = FPED_IND_PATH
+        }
+
+        if (is.character(NUTRIENT_IND_PATH) == TRUE) {
+            NUTRIENT_IND = read_xpt(NUTRIENT_IND_PATH)
+        } else {
+            NUTRIENT_IND = NUTRIENT_IND_PATH
+        }
+
+        if (!("DR1ILINE" %in% colnames(FPED_IND)) | !("DR1ILINE" %in% colnames(NUTRIENT_IND))) {
+            stop("Please use individual-level first day data. Individual-level nutrient data should be like DR1IFF_J.XPT. Individual-level FPED data should be like fped_dr1iff_1718.sas7bdat")
+        }
+
+        # Select only the high quality data
+        NUTRIENT_IND = NUTRIENT_IND %>%
+            filter(DR1DRSTZ == 1) %>%
+            arrange(SEQN)
+
+        FPED_IND = FPED_IND %>%
+            arrange(SEQN)
+
+        # merge the FPED and nutrient data. Here, the data is all the individual consumed foods and nutrients for each individual (SEQN). The DR1IFDCD.x is the food code for the consumed food.
+        COHORT = NUTRIENT_IND %>%
+            left_join(FPED_IND, by = c("SEQN", "DR1ILINE"))
+
+        # Create the serving size variables for ACS2020 calculation
+        COHORT_summary = COHORT %>%
+            dplyr::mutate(
+                # create the variable for added sugars from SSB
+                ADDED_SUGAR_SSB_SERV = case_when(
+                    DR1IFDCD.x %in% SSB ~ DR1I_ADD_SUGARS,
+                    TRUE ~ 0
+                )
+            ) %>%
+            # group by individual
+            dplyr::group_by(SEQN) %>%
+            # summarize to get the total servings of each food group for each individual
+            dplyr::summarize(
+                ENERGY = sum(DR1IKCAL),
+                RIAGENDR = min(RIAGENDR),
+                VEG_SERV = sum(DR1I_V_DRKGR + (DR1I_V_REDOR_TOTAL + DR1I_V_OTHER + DR1I_V_STARCHY_OTHER) / 0.5),
+                # count the unique number of DR1IFDCD.x with any values in vegetables (DR1I_V_DRKGR, DR1I_V_REDOR_TOTAL, DR1I_V_OTHER, DR1I_V_STARCHY_OTHER)
+                VEG_ITEMS_SERV = length(unique(DR1IFDCD.x[DR1I_V_DRKGR > 0 | DR1I_V_REDOR_TOTAL > 0 | DR1I_V_OTHER > 0 | DR1I_V_STARCHY_OTHER > 0])),
+                FRT_SERV = sum(DR1I_F_TOTAL - DR1I_F_JUICE),
+                # count the unique number of DR1IFDCD.x with any values in fruits but not fruit juice (DR1I_F_TOTAL - DR1I_F_JUICE)
+                FRT_ITEMS_SERV = length(unique(DR1IFDCD.x[DR1I_F_TOTAL > 0 & DR1I_F_JUICE == 0])),
+                WGRAIN_SERV = sum(DR1I_G_WHOLE / 0.035274),
+                REDPROC_MEAT_SERV = sum((DR1I_PF_CUREDMEAT / 1.5) + ((DR1I_PF_MEAT + DR1I_PF_ORGAN) / 4)),
+                # The daily servings of highly processed foods and refined grains per 1000 kcal
+                # the ultra-processed variable for the score should not double count foods included in other parts of the score, for example, sugar-sweetened beverages or processed meats
+                # In NHANES, this should be refined grains
+                HPFRG_SERV = sum(DR1I_G_REFINED / 0.035274),
+                SSB_FRTJ_SERV = sum((ADDED_SUGAR_SSB_SERV * 4 / 26))
+            )
+
+        # select only participants with more than 0 kcal intake
+        COHORT_summary = COHORT_summary %>%
+            filter(ENERGY > 0)
+
+        ## ACS2020 score calculation
+        COHORT_summary_ACS2020 = ACS2020_V2(
+            SERV_DATA = COHORT_summary,
+            RESPONDENTID = COHORT_summary$SEQN,
+            GENDER = COHORT_summary$RIAGENDR,
+            TOTALKCAL_ACS2020 = COHORT_summary$ENERGY,
+            VEG_SERV_ACS2020 = COHORT_summary$VEG_SERV,
+            VEG_ITEMS_SERV_ACS2020 = COHORT_summary$VEG_ITEMS_SERV,
+            FRT_SERV_ACS2020 = COHORT_summary$FRT_SERV,
+            FRT_ITEMS_SERV_ACS2020 = COHORT_summary$FRT_ITEMS_SERV,
+            WGRAIN_SERV_ACS2020 = COHORT_summary$WGRAIN_SERV,
+            REDPROC_MEAT_SERV_ACS2020 = COHORT_summary$REDPROC_MEAT_SERV,
+            HPFRG_SERV_ACS2020 = COHORT_summary$HPFRG_SERV,
+            SSB_FRTJ_SERV_ACS2020 = COHORT_summary$SSB_FRTJ_SERV
+        )
+
+        # rename RESPONDENTID to SEQN and GENDER to RIAGENDR
+        COHORT_summary_ACS2020 = COHORT_summary_ACS2020 %>%
+            rename(SEQN = RESPONDENTID, RIAGENDR = GENDER)
+
+    }
+
+    # if only day 2 data is provided
+    if (!is.null(FPED_IND_PATH2) & !is.null(NUTRIENT_IND_PATH2)) {
+        if (is.character(FPED_IND_PATH2) == TRUE) {
+            FPED_IND2 = read_sas(FPED_IND_PATH2)
+        } else {
+            FPED_IND2 = FPED_IND_PATH2
+        }
+
+        if (is.character(NUTRIENT_IND_PATH2) == TRUE) {
+            NUTRIENT_IND2 = read_xpt(NUTRIENT_IND_PATH2)
+        } else {
+            NUTRIENT_IND2 = NUTRIENT_IND_PATH2
+        }
+
+        if (!("DR2ILINE" %in% colnames(FPED_IND2)) | !("DR2ILINE" %in% colnames(NUTRIENT_IND2))) {
+            stop("Please use individual-level second day data. Individual-level nutrient data should be like DR2IFF_J.XPT. Individual-level FPED data should be like fped_dr2iff_1718.sas7bdat")
+        }
+
+
+        NUTRIENT_IND2 = NUTRIENT_IND2 %>%
+            filter(DR2DRSTZ == 1) %>%
+            arrange(SEQN)
+
+        FPED_IND2 = FPED_IND2 %>%
+            arrange(SEQN)
+
+        COHORT2 = NUTRIENT_IND2 %>%
+            left_join(FPED_IND2, by = c("SEQN", "DR2ILINE"))
+
+        COHORT2_summary = COHORT2 %>%
+            dplyr::mutate(
+                # create the variable for added sugars from SSB
+                ADDED_SUGAR_SSB_SERV = case_when(
+                    DR2IFDCD.x %in% SSB ~ DR2I_ADD_SUGARS,
+                    TRUE ~ 0
+                )
+            ) %>%
+            # group by individual
+            dplyr::group_by(SEQN) %>%
+            # summarize to get the total servings of each food group for each individual
+            dplyr::summarize(
+                ENERGY = sum(DR2IKCAL),
+                RIAGENDR = min(RIAGENDR),
+                VEG_SERV = sum(DR2I_V_DRKGR + (DR2I_V_REDOR_TOTAL + DR2I_V_OTHER + DR2I_V_STARCHY_OTHER) / 0.5),
+                VEG_ITEMS_SERV = length(unique(DR2IFDCD.x[DR2I_V_DRKGR > 0 | DR2I_V_REDOR_TOTAL > 0 | DR2I_V_OTHER > 0 | DR2I_V_STARCHY_OTHER > 0])),
+                FRT_SERV = sum(DR2I_F_TOTAL - DR2I_F_JUICE),
+                FRT_ITEMS_SERV = length(unique(DR2IFDCD.x[DR2I_F_TOTAL > 0 & DR2I_F_JUICE == 0])),
+                WGRAIN_SERV = sum(DR2I_G_WHOLE / 0.035274),
+                REDPROC_MEAT_SERV = sum((DR2I_PF_CUREDMEAT / 1.5) + ((DR2I_PF_MEAT + DR2I_PF_ORGAN) / 4)),
+                # The daily servings of highly processed foods and refined grains per 1000 kcal
+                # the ultra-processed variable for the score should not double count foods included in other parts of the score, for example, sugar-sweetened beverages or processed meats
+                # In NHANES, this should be refined grains
+                HPFRG_SERV = sum(DR2I_G_REFINED / 0.035274),
+                SSB_FRTJ_SERV = sum((ADDED_SUGAR_SSB_SERV * 4 / 26))
+            )
+
+        # select only participants with more than 0 kcal intake
+        COHORT2_summary = COHORT2_summary %>%
+            filter(ENERGY > 0)
+
+        ## ACS2020 calculation
+        COHORT2_summary_ACS2020 = ACS2020_V2(
+            SERV_DATA = COHORT2_summary,
+            RESPONDENTID = COHORT2_summary$SEQN,
+            GENDER = COHORT2_summary$RIAGENDR,
+            TOTALKCAL_ACS2020 = COHORT2_summary$ENERGY,
+            VEG_SERV_ACS2020 = COHORT2_summary$VEG_SERV,
+            VEG_ITEMS_SERV_ACS2020 = COHORT2_summary$VEG_ITEMS_SERV,
+            FRT_SERV_ACS2020 = COHORT2_summary$FRT_SERV,
+            FRT_ITEMS_SERV_ACS2020 = COHORT2_summary$FRT_ITEMS_SERV,
+            WGRAIN_SERV_ACS2020 = COHORT2_summary$WGRAIN_SERV,
+            REDPROC_MEAT_SERV_ACS2020 = COHORT2_summary$REDPROC_MEAT_SERV,
+            HPFRG_SERV_ACS2020 = COHORT2_summary$HPFRG_SERV,
+            SSB_FRTJ_SERV_ACS2020 = COHORT2_summary$SSB_FRTJ_SERV
+        )
+
+        # rename RESPONDENTID to SEQN and GENDER to RIAGENDR
+        COHORT2_summary_ACS2020 = COHORT2_summary_ACS2020 %>%
+            rename(SEQN = RESPONDENTID, RIAGENDR = GENDER)
+    }
+
+    if (!is.null(FPED_IND_PATH) & !is.null(NUTRIENT_IND_PATH) & is.null(FPED_IND_PATH2) & is.null(NUTRIENT_IND_PATH2)) {
+        message("Trans fat is not avaiable for NHANES, so it is not included in the ACS2020 score.")
+        return(COHORT_summary_ACS2020)
+    }
+
+    if (is.null(FPED_IND_PATH) & is.null(NUTRIENT_IND_PATH) & !is.null(FPED_IND_PATH2) & !is.null(NUTRIENT_IND_PATH2)) {
+        message("Trans fat is not avaiable for NHANES, so it is not included in the ACS2020 score.")
+        return(COHORT2_summary_ACS2020)
+    }
+
+    # merge two days data if they both exist by creating columns with the same name but taking average of the original column
+    if (!is.null(FPED_IND_PATH) & !is.null(NUTRIENT_IND_PATH) & !is.null(FPED_IND_PATH2) & !is.null(NUTRIENT_IND_PATH2)) {
+        COHORT12_summary_ACS2020 = inner_join(COHORT_summary_ACS2020, COHORT2_summary_ACS2020, by = "SEQN") %>%
+            mutate(
+                # ACS2020_V2_ALL TOTALKCAL_ACS2020 ACS2020_VEG ACS2020_VEG_ITEMS ACS2020_FRT ACS2020_FRT_ITEMS ACS2020_WGRAIN ACS2020_REDPROC_MEAT ACS2020_HPFRG ACS2020_SSB_FRTJ
+                ACS2020_V2_ALL = (ACS2020_V2_ALL.x + ACS2020_V2_ALL.y) / 2,
+                RIAGENDR = RIAGENDR.x,
+                TOTALKCAL_ACS2020 = (TOTALKCAL_ACS2020.x + TOTALKCAL_ACS2020.y) / 2,
+                ACS2020_VEG = (ACS2020_VEG.x + ACS2020_VEG.y) / 2,
+                ACS2020_VEG_ITEMS = (ACS2020_VEG_ITEMS.x + ACS2020_VEG_ITEMS.y) / 2,
+                ACS2020_FRT = (ACS2020_FRT.x + ACS2020_FRT.y) / 2,
+                ACS2020_FRT_ITEMS = (ACS2020_FRT_ITEMS.x + ACS2020_FRT_ITEMS.y) / 2,
+                ACS2020_WGRAIN = (ACS2020_WGRAIN.x + ACS2020_WGRAIN.y) / 2,
+                ACS2020_REDPROC_MEAT = (ACS2020_REDPROC_MEAT.x + ACS2020_REDPROC_MEAT.y) / 2,
+                ACS2020_HPFRG = (ACS2020_HPFRG.x + ACS2020_HPFRG.y) / 2,
+                ACS2020_SSB_FRTJ = (ACS2020_SSB_FRTJ.x + ACS2020_SSB_FRTJ.y) / 2
+            ) %>%
+            select(
+                SEQN, RIAGENDR, ACS2020_V2_ALL, TOTALKCAL_ACS2020, ACS2020_VEG, ACS2020_VEG_ITEMS, ACS2020_FRT, ACS2020_FRT_ITEMS, ACS2020_WGRAIN, ACS2020_REDPROC_MEAT, ACS2020_HPFRG, ACS2020_SSB_FRTJ
+            )
+
+        return(COHORT12_summary_ACS2020)
+    }
+}
 ```
 
 # Data preprocessing
@@ -173,7 +391,7 @@ suffix  <- c("_D","_E","_F","_G","_H","_I","_J")
 cycles  <- c("0506","0708","0910","1112","1314","1516","1718")
 
 # Groups of variables
-demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU","WTMEC2YR", "WTDR2D", "DMDEDUC2","RIDRETH1","DMDMARTL","INDFMPIR", "DMDHHSIZ")
+demo_cols   <- c("RIAGENDR","RIDAGEYR","SDMVSTRA","SDMVPSU","WTMEC2YR", "DMDEDUC2","RIDRETH1","DMDMARTL","INDFMPIR", "DMDHHSIZ")
 mcq_cols    <- c("MCQ160B","MCQ160C","MCQ160D","MCQ160E","MCQ160F","MCQ220")
 diq_cols    <- c("DIQ010","DIQ050", "DID060", "DIQ070", "DID040", "DIQ175S")
 bpq_cols    <- c("BPQ020")
@@ -460,6 +678,36 @@ DII_0518 <- map_dfr(cycles, function(cyc) {
 })
 
 #View(DII_0518)
+```
+
+### ACS2020
+
+```{r prepare and calculate ACS2020}
+#| eval: false
+#| include: false
+# Prepare ACS2020 specific data
+ACS2020_0518 <- map_dfr(cycles, function(cyc) {
+  dat <- NHANES_ALL[[cyc]]
+
+  # Calculate ACS2020 scores
+  out <- ACS2020_NHANES_FPED(
+    FPED_IND_PATH      = dat$FPED_IND,
+    NUTRIENT_IND_PATH  = dat$NUTRIENT_IND,
+    FPED_IND_PATH2     = dat$FPED_IND2,
+    NUTRIENT_IND_PATH2 = dat$NUTRIENT_IND2
+  )
+
+  # Extract weight variable from NUTRIENT data
+  weights <- dat$NUTRIENT %>% 
+    select(SEQN, WTDR2D)
+  
+  # Merge weight and add cycle
+  out %>%
+    left_join(weights, by = "SEQN") %>%
+    mutate(cycle = cyc)
+})
+
+#View(ACS2020_0518)
 ```
 
 ### PHDI
@@ -783,7 +1031,8 @@ nhanes_merged_0518 <- Reduce(
     AHEI_0518,
     DASH_0518,
     AMED_0518,
-    DII_0518
+    DII_0518,
+    ACS2020_0518
   )
 )
 
@@ -1152,7 +1401,7 @@ nhanes_merged_0518 <- nhanes_merged_0518 %>%
 # DR1TKCAL; DR2TKCAL ở trên PHDI đã có ghép vào
 
 # filter 
-excluded_cols <- c("HEI2020_ALL","AHEI_ALL","DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
+excluded_cols <- c("HEI2020_ALL","AHEI_ALL","DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean", "ACS2020_V2_ALL")
                    #"M_CVD","T2D","cancer")
 health_cols <- c("CHF","CHD","Angina","MI","Stroke",
             "M_CVD","T2D","cancer", "MCD")
@@ -1262,8 +1511,8 @@ nhanes_merged_0518_filtered %>%
 ```{r list holders}
 # Define outcomes and diet scores
 outcomes <- c("MCD", "M_CVD", "T2D", "cancer", "MetS", "OBESE", "AB_OBESE", "bp_high", "glu_high", "tg_high", "hdl_low")
-diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
-diet_scores_cat <- c("HEI2020_cat", "AHEI_cat", "DASH_cat", "AMED_cat", "DII_cat", "PHDI_cat")
+diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean", "ACS2020_V2_ALL")
+diet_scores_cat <- c("HEI2020_cat", "AHEI_cat", "DASH_cat", "AMED_cat", "DII_cat", "PHDI_cat", "ACS2020_V2_cat")
 adjust <- " + RIAGENDR + RIDAGEYR + RIDRETH1 + DMDEDUC2_CAT + DMDMARTL_CAT + SMQ_CAT + TOTALKCAL_PHDI_mean + DMDHHSIZ"
 
 # Create a mapping for outcome labels
@@ -1317,7 +1566,8 @@ nhanes_merged_0518_filter <- nhanes_merged_0518_filter %>%
     DASH_cat    = factor(ntile(DASH_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
     AMED_cat    = factor(ntile(MED_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
     DII_cat     = factor(ntile(DII_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5)),
-    PHDI_cat    = factor(ntile(PHDI_ALL_mean, 5), levels = 1:5, labels = paste0("Q", 1:5))
+    PHDI_cat    = factor(ntile(PHDI_ALL_mean, 5), levels = 1:5, labels = paste0("Q", 1:5)),
+    ACS2020_V2_cat = factor(ntile(ACS2020_V2_ALL, 5), levels = 1:5, labels = paste0("Q", 1:5))
   )
 ```
 
@@ -1329,6 +1579,7 @@ var_label(nhanes_merged_0518_filter) <- list(
   AMED_cat    = "aMED quartile",
   DII_cat     = "DII quartile",
   PHDI_cat    = "PHDI quartile",
+  ACS2020_V2_cat = "ACS2020 quartile",
   M_CVD       = "Major cardiovascular disease",
   T2D         = "Type 2 diabetes",
   cancer      = "Cancer",
@@ -1368,7 +1619,8 @@ design <- subset(PHDI_GHG_FINAL_DATA_0518_design_14yr,
                  !is.na(DASH_ALL) & 
                  !is.na(MED_ALL) & 
                  !is.na(DII_ALL) & 
-                 !is.na(PHDI_ALL_mean) & 
+                 !is.na(PHDI_ALL_mean) &
+                 !is.na(ACS2020_V2_ALL) &
                  !is.na(M_CVD) & 
                  !is.na(T2D) & 
                  !is.na(cancer) & 
@@ -1385,7 +1637,8 @@ nhanes_merged_0518_filter <- nhanes_merged_0518_filter %>%
                  !is.na(DASH_ALL) & 
                  !is.na(MED_ALL) & 
                  !is.na(DII_ALL) & 
-                 !is.na(PHDI_ALL_mean) & 
+                 !is.na(PHDI_ALL_mean) &
+                 !is.na(ACS2020_V2_ALL) &
                  !is.na(M_CVD) & 
                  !is.na(T2D) & 
                  !is.na(cancer) & 
@@ -1439,7 +1692,8 @@ design <- subset(PHDI_GHG_FINAL_DATA_0518_design_14yr,
                  !is.na(DASH_ALL) & 
                  !is.na(MED_ALL) & 
                  !is.na(DII_ALL) & 
-                 !is.na(PHDI_ALL_mean) & 
+                 !is.na(PHDI_ALL_mean) &
+                 !is.na(ACS2020_V2_ALL) &
                  !is.na(M_CVD) & 
                  !is.na(T2D) & 
                  !is.na(cancer) & 
@@ -1645,6 +1899,7 @@ tables_list$DASH_cat
 tables_list$AMED_cat
 tables_list$DII_cat
 tables_list$PHDI_cat
+tables_list$ACS2020_V2_cat
 ```
 
 \newpage
@@ -1724,6 +1979,7 @@ forest_data <- results_df_multivariable %>%
       grepl("AMED", Diet_Score) ~ "AMED",
       grepl("DII", Diet_Score) ~ "DII",
       grepl("PHDI", Diet_Score) ~ "PHDI",
+      grepl("ACS2020_V2", Diet_Score) ~ "ACS2020_V2",
       TRUE ~ Diet_Score
     ),
 
@@ -1736,7 +1992,7 @@ forest_data <- results_df_multivariable %>%
 
     # Clean up diet score labels to match the example
     Diet_Score_Label = factor(Diet_Score_Label, 
-                               levels = c("HEI2020", "AHEI", "DASH", "AMED", "DII", "PHDI")),
+                               levels = c("HEI2020", "AHEI", "DASH", "AMED", "DII", "PHDI", "ACS2020_V2")),
     # Format OR and CI for display
     OR_CI_text = sprintf("%.2f (%.2f-%.2f)", OR, Lower_CI, Upper_CI)
   ) %>%
@@ -1787,7 +2043,8 @@ for (outcome_name in outcome_order) {
       "DASH" = "#27AE60",
       "AMED" = "#95A5A6",
       "DII" = "#3498DB",
-      "PHDI" = "#9B59B6"
+      "PHDI" = "#9B59B6",
+      "ACS2020_V2" = "#1ABC9C"
     )) +
     # Labels
     labs(
@@ -1834,7 +2091,7 @@ gridExtra::grid.arrange(grobs = plot_list[outcome_order], ncol = 2)
 
 # Define diet scores and outcome
 outcome <- "mortstat"
-diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean")
+diet_scores_cont <- c("HEI2020_ALL", "AHEI_ALL", "DASH_ALL", "MED_ALL", "DII_ALL", "PHDI_ALL_mean", "ACS2020_V2_ALL")
 
 # Define nice labels for plotting
 score_labels <- c(
@@ -1843,7 +2100,8 @@ score_labels <- c(
   "DASH_ALL" = "DASH",
   "MED_ALL" = "Mediterranean",
   "DII_ALL" = "DII",
-  "PHDI_ALL_mean" = "PHDI"
+  "PHDI_ALL_mean" = "PHDI",
+  "ACS2020_V2_ALL" = "ACS2020_V2"
 )
 
 # Initialize list to store all plot data
@@ -1939,9 +2197,10 @@ diet_score_labels <- c(
   "HEI2020_cat" = "HEI-2020",
   "AHEI_cat" = "AHEI",
   "DASH_cat" = "DASH",
-  "AMED_cat" = "Mediterranean",
+  "AMED_cat" = "AMED",
   "DII_cat" = "DII",
-  "PHDI_cat" = "PHDI"
+  "PHDI_cat" = "PHDI",
+  "ACS2020_V2_cat" = "ACS2020_V2"
 )
 
 # Initialize list to store plots
@@ -2100,6 +2359,7 @@ design2y <- subset(PHDI_GHG_FINAL_DATA_0518_design,
                  !is.na(MED_ALL) & 
                  !is.na(DII_ALL) & 
                  !is.na(PHDI_ALL_mean) & 
+                 !is.na(ACS2020_V2_ALL) &
                  !is.na(M_CVD) & 
                  !is.na(T2D) & 
                  !is.na(cancer) & 
@@ -2124,12 +2384,14 @@ for (ds in diet_scores_cont) {
 diet_survey_summary <- bind_rows(all_diet_summaries) %>%
   mutate(
     diet_score_label = case_when(
-      diet_score == "HEI2020_ALL" ~ "Healthy Eating Index 2020 (HEI-2020)",
-      diet_score == "AHEI_ALL" ~ "Alternate Healthy Eating Index (AHEI)",
-      diet_score == "DASH_ALL" ~ "Dietary Approaches to Stop Hypertension (DASH)",
-      diet_score == "MED_ALL" ~ "Alternate Mediterranean Diet (aMED)",
-      diet_score == "DII_ALL" ~ "Dietary Inflammatory Index (DII)",
-      diet_score == "PHDI_ALL_mean" ~ "Planetary Health Diet Index (PHDI)"
+      diet_score == "HEI2020_ALL" ~ "Healthy Eating Index 2020 (HEI-2020) (0-100)",
+      diet_score == "AHEI_ALL" ~ "Alternative Healthy Eating Index (AHEI) (0-110)",
+      diet_score == "DASH_ALL" ~ "Dietary Approaches to Stop Hypertension (DASH) (8-40)",
+      diet_score == "MED_ALL" ~ "Alternate Mediterranean Diet (aMED) (0-9)",
+      diet_score == "DII_ALL" ~ "Dietary Inflammatory Index (DII) (-5.5 to +5.5)",
+      diet_score == "PHDI_ALL_mean" ~ "Planetary Health Diet Index (PHDI) (0-150)",
+      diet_score == "ACS2020_V2_ALL" ~ "American Cancer Society 2020 diet score",
+      TRUE ~ diet_score
     ),
     cycle_label = case_when(
       cycle == "0506" ~ "2005-2006",
@@ -2153,6 +2415,7 @@ diet_trend <- ggplot(diet_survey_summary, aes(x = cycle_label, y = SE_score, col
   theme_bw() +
   labs(x = "NHANES Cycle", y = "Mean Diet Score", color = "Dietary Pattern Score") +
   scale_color_brewer(type = "qual", palette = "Set2") +
+  guides(color = guide_legend(ncol = 1)) +
   theme(plot.title = element_text(size = 22),
         axis.title.x = element_text(size = 18),
         axis.title.y = element_text(size = 18),
@@ -2160,14 +2423,44 @@ diet_trend <- ggplot(diet_survey_summary, aes(x = cycle_label, y = SE_score, col
         axis.text.y = element_text(size = 14),
         legend.text = element_text(size = 14),
         legend.title = element_text(size = 16),
-        legend.position = "right")
+        legend.position = "bottom")
 
 diet_trend
 ```
 
 ```{r}
-#| label: fig-foodgroup-diseases
-#| fig-cap: "Multivariable-adjusted associations between food groups and health outcomes (OR comparing 90th to 10th percentile)"
+#| label: tbl-diet-score-trend
+#| tbl-cap: "Mean diet scores (± SE) across NHANES cycles"
+
+# Create table with mean ± SE for each diet score by cycle
+diet_trend_table <- diet_survey_summary %>%
+  mutate(
+    # Format as mean ± SE
+    mean_se = sprintf("%.2f ± %.2f", SE_score, se)
+  ) %>%
+  select(diet_score_label, cycle_label, mean_se) %>%
+  pivot_wider(
+    names_from = cycle_label,
+    values_from = mean_se
+  ) %>%
+  rename(`Diet Score` = diet_score_label)
+
+# Create flextable
+diet_trend_ft <- flextable(diet_trend_table) %>%
+  theme_box() %>%
+  align(align = "center", part = "all") %>%
+  align(j = 1, align = "left", part = "body") %>%
+  fontsize(size = 10, part = "all") %>%
+  bold(part = "header") %>%
+  autofit() %>%
+  FitFlextableToPage(pgwidth = 6.5)
+
+diet_trend_ft
+```
+
+```{r}
+#| label: fig-foodgroupphdi-diseases
+#| fig-cap: "Multivariable-adjusted associations between PHDI food groups and health outcomes (OR comparing 90th to 10th percentile)"
 #| fig-width: 12
 #| fig-height: 8
 
@@ -2216,8 +2509,8 @@ for (i in 1:length(food_groups)) {
     p10 <- as.numeric(svyquantile(as.formula(paste0("~", fg)), design, quantiles = 0.10, na.rm = TRUE)[[1]])
     p90 <- as.numeric(svyquantile(as.formula(paste0("~", fg)), design, quantiles = 0.90, na.rm = TRUE)[[1]])
     
-    # Fit logistic regression adjusted for age
-    formula_model <- as.formula(paste0(outcome, " ~ ", fg, " + RIDAGEYR"))
+    # Fit logistic regression adjusted for age, sex and total energy intake
+    formula_model <- as.formula(paste0(outcome, " ~ ", fg, " + RIAGENDR + RIDAGEYR + TOTALKCAL_PHDI_mean"))
     model <- svyglm(formula_model, design = design, family = poisson(link = log))
     
     # Get coefficient for food group
@@ -2288,8 +2581,600 @@ ggplot(or_df, aes(x = Outcome, y = Food_Group, fill = OR)) +
   )
 ```
 
+\newpage
+
 ```{r}
-#| label: fig-components-year
+#| label: fig-foodgrouphei2020-diseases
+#| fig-cap: "Multivariable-adjusted associations between HEI-2020 components and health outcomes (OR comparing 90th to 10th percentile)"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define HEI-2020 components
+hei2020_components <- c(
+  "HEI2020_TOTALFRT", "HEI2020_FRT", "HEI2020_VEG", "HEI2020_GREENNBEAN",
+  "HEI2020_TOTALPRO", "HEI2020_SEAPLANTPRO", "HEI2020_WHOLEGRAIN", "HEI2020_DAIRY",
+  "HEI2020_FATTYACID", "HEI2020_REFINEDGRAIN", "HEI2020_SODIUM", "HEI2020_ADDEDSUGAR",
+  "HEI2020_SATFAT"
+)
+
+# Clean component names for display
+hei2020_labels <- c(
+  "HEI2020_TOTALFRT" = "Total Fruits",
+  "HEI2020_FRT" = "Whole Fruits",
+  "HEI2020_VEG" = "Total Vegetables",
+  "HEI2020_GREENNBEAN" = "Greens and Beans",
+  "HEI2020_TOTALPRO" = "Total Protein",
+  "HEI2020_SEAPLANTPRO" = "Seafood & Plant Protein",
+  "HEI2020_WHOLEGRAIN" = "Whole Grains",
+  "HEI2020_DAIRY" = "Dairy",
+  "HEI2020_FATTYACID" = "Fatty Acids Ratio",
+  "HEI2020_REFINEDGRAIN" = "Refined Grains",
+  "HEI2020_SODIUM" = "Sodium",
+  "HEI2020_ADDEDSUGAR" = "Added Sugars",
+  "HEI2020_SATFAT" = "Saturated Fats"
+)
+
+# Create matrices to store ORs and p-values
+or_matrix <- matrix(NA, nrow = length(hei2020_components), ncol = length(outcomes))
+pval_matrix <- matrix(NA, nrow = length(hei2020_components), ncol = length(outcomes))
+rownames(or_matrix) <- hei2020_components
+colnames(or_matrix) <- outcomes
+rownames(pval_matrix) <- hei2020_components
+colnames(pval_matrix) <- outcomes
+
+# Calculate ORs comparing 90th to 10th percentile
+for (i in 1:length(hei2020_components)) {
+  for (j in 1:length(outcomes)) {
+    comp <- hei2020_components[i]
+    outcome <- outcomes[j]
+    
+    # Calculate 10th and 90th percentiles
+    p10 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.10, na.rm = TRUE)[[1]])
+    p90 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.90, na.rm = TRUE)[[1]])
+    
+    # Fit logistic regression adjusted for age, sex and total energy intake
+    formula_model <- as.formula(paste0(outcome, " ~ ", comp, " + RIAGENDR + RIDAGEYR + TOTALKCAL_PHDI_mean"))
+    model <- svyglm(formula_model, design = design, family = poisson(link = log))
+    
+    # Get coefficient for component
+    coef_summary <- summary(model)$coefficients
+    
+    # Extract coefficient for component (second row)
+    beta <- as.numeric(coef_summary[2, "Estimate"])[1]
+    pval <- as.numeric(coef_summary[2, "Pr(>|t|)"])[1]
+    
+    # Calculate OR for 90th vs 10th percentile
+    OR <- as.numeric(exp(beta * (p90 - p10)))[1]
+    or_matrix[i, j] <- OR
+    pval_matrix[i, j] <- pval
+  }
+}
+
+# Convert to data frame for ggplot
+or_df <- as.data.frame(or_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "OR") %>%
+  mutate(
+    Component = hei2020_labels[Component],
+    Component = factor(Component, levels = rev(hei2020_labels)),
+    Outcome = factor(Outcome, levels = outcomes)
+  )
+
+# Add p-values
+pval_df <- as.data.frame(pval_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "P_value") %>%
+  mutate(Component = hei2020_labels[Component])
+
+or_df <- or_df %>%
+  left_join(pval_df, by = c("Component", "Outcome")) %>%
+  mutate(
+    Significant = P_value < 0.05,
+    OR_display = ifelse(!is.na(OR), sprintf("%.2f", OR), "")
+  )
+
+# Create heatmap
+ggplot(or_df, aes(x = Outcome, y = Component, fill = OR)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = ifelse(Significant, paste0(OR_display, "*"), OR_display)), 
+            size = 2.8, color = "black") +
+  scale_fill_gradient2(
+    low = "#4CAF50",
+    mid = "white",
+    high = "#E91E63",
+    midpoint = 1,
+    limits = c(0.1, 2.0),
+    na.value = "grey90",
+    name = "Odds Ratio\n(90th vs 10th\npercentile)"
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Multivariable-adjusted Associations between HEI-2020 Components and Health Outcomes",
+    caption = "*P < 0.05 (age-adjusted)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    plot.caption = element_text(size = 9, hjust = 0),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+```
+
+\newpage
+
+```{r}
+#| label: fig-foodgroupahei-diseases
+#| fig-cap: "Multivariable-adjusted associations between AHEI components and health outcomes (OR comparing 90th to 10th percentile)"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define AHEI components
+ahei_components <- c(
+  "AHEI_VEG", "AHEI_FRT", "AHEI_WGRAIN", "AHEI_NUTSLEG", "AHEI_N3FAT",
+  "AHEI_PUFA", "AHEI_SSB_FRTJ", "AHEI_REDPROC_MEAT", "AHEI_SODIUM", "AHEI_ALCOHOL"
+)
+
+# Clean component names for display
+ahei_labels <- c(
+  "AHEI_VEG" = "Vegetables",
+  "AHEI_FRT" = "Fruits",
+  "AHEI_WGRAIN" = "Whole Grains",
+  "AHEI_NUTSLEG" = "Nuts & Legumes",
+  "AHEI_N3FAT" = "Omega-3 Fatty Acids",
+  "AHEI_PUFA" = "PUFA",
+  "AHEI_SSB_FRTJ" = "SSB & Fruit Juice",
+  "AHEI_REDPROC_MEAT" = "Red/Processed Meat",
+  "AHEI_SODIUM" = "Sodium",
+  "AHEI_ALCOHOL" = "Alcohol"
+)
+
+# Create matrices to store ORs and p-values
+or_matrix <- matrix(NA, nrow = length(ahei_components), ncol = length(outcomes))
+pval_matrix <- matrix(NA, nrow = length(ahei_components), ncol = length(outcomes))
+rownames(or_matrix) <- ahei_components
+colnames(or_matrix) <- outcomes
+rownames(pval_matrix) <- ahei_components
+colnames(pval_matrix) <- outcomes
+
+# Calculate ORs comparing 90th to 10th percentile
+for (i in 1:length(ahei_components)) {
+  for (j in 1:length(outcomes)) {
+    comp <- ahei_components[i]
+    outcome <- outcomes[j]
+    
+    # Calculate 10th and 90th percentiles
+    p10 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.10, na.rm = TRUE)[[1]])
+    p90 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.90, na.rm = TRUE)[[1]])
+    
+    # Fit logistic regression adjusted for age, sex and total energy intake
+    formula_model <- as.formula(paste0(outcome, " ~ ", comp, " + RIAGENDR + RIDAGEYR + TOTALKCAL_PHDI_mean"))
+    model <- svyglm(formula_model, design = design, family = poisson(link = log))
+    
+    # Get coefficient for component
+    coef_summary <- summary(model)$coefficients
+    
+    # Extract coefficient for component (second row)
+    beta <- as.numeric(coef_summary[2, "Estimate"])[1]
+    pval <- as.numeric(coef_summary[2, "Pr(>|t|)"])[1]
+    
+    # Calculate OR for 90th vs 10th percentile
+    OR <- as.numeric(exp(beta * (p90 - p10)))[1]
+    or_matrix[i, j] <- OR
+    pval_matrix[i, j] <- pval
+  }
+}
+
+# Convert to data frame for ggplot
+or_df <- as.data.frame(or_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "OR") %>%
+  mutate(
+    Component = ahei_labels[Component],
+    Component = factor(Component, levels = rev(ahei_labels)),
+    Outcome = factor(Outcome, levels = outcomes)
+  )
+
+# Add p-values
+pval_df <- as.data.frame(pval_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "P_value") %>%
+  mutate(Component = ahei_labels[Component])
+
+or_df <- or_df %>%
+  left_join(pval_df, by = c("Component", "Outcome")) %>%
+  mutate(
+    Significant = P_value < 0.05,
+    OR_display = ifelse(!is.na(OR), sprintf("%.2f", OR), "")
+  )
+
+# Create heatmap
+ggplot(or_df, aes(x = Outcome, y = Component, fill = OR)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = ifelse(Significant, paste0(OR_display, "*"), OR_display)), 
+            size = 2.8, color = "black") +
+  scale_fill_gradient2(
+    low = "#4CAF50",
+    mid = "white",
+    high = "#E91E63",
+    midpoint = 1,
+    limits = c(0.1, 2.0),
+    na.value = "grey90",
+    name = "Odds Ratio\n(90th vs 10th\npercentile)"
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Multivariable-adjusted Associations between AHEI Components and Health Outcomes",
+    caption = "*P < 0.05 (age-adjusted)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    plot.caption = element_text(size = 9, hjust = 0),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+```
+
+\newpage
+
+```{r}
+#| label: fig-foodgroupdash-diseases
+#| fig-cap: "Multivariable-adjusted associations between DASH components and health outcomes (OR comparing 90th to 10th percentile)"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define DASH components
+dash_components <- c(
+  "DASH_FRT", "DASH_VEG", "DASH_NUTSLEG", "DASH_WGRAIN", "DASH_LOWF_DAIRY",
+  "DASH_SODIUM", "DASH_REDPROC_MEAT", "DASH_SSB_FRTJ"
+)
+
+# Clean component names for display
+dash_labels <- c(
+  "DASH_FRT" = "Fruits",
+  "DASH_VEG" = "Vegetables",
+  "DASH_NUTSLEG" = "Nuts & Legumes",
+  "DASH_WGRAIN" = "Whole Grains",
+  "DASH_LOWF_DAIRY" = "Low-Fat Dairy",
+  "DASH_SODIUM" = "Sodium",
+  "DASH_REDPROC_MEAT" = "Red/Processed Meat",
+  "DASH_SSB_FRTJ" = "SSB & Fruit Juice"
+)
+
+# Create matrices to store ORs and p-values
+or_matrix <- matrix(NA, nrow = length(dash_components), ncol = length(outcomes))
+pval_matrix <- matrix(NA, nrow = length(dash_components), ncol = length(outcomes))
+rownames(or_matrix) <- dash_components
+colnames(or_matrix) <- outcomes
+rownames(pval_matrix) <- dash_components
+colnames(pval_matrix) <- outcomes
+
+# Calculate ORs comparing 90th to 10th percentile
+for (i in 1:length(dash_components)) {
+  for (j in 1:length(outcomes)) {
+    comp <- dash_components[i]
+    outcome <- outcomes[j]
+    
+    # Calculate 10th and 90th percentiles
+    p10 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.10, na.rm = TRUE)[[1]])
+    p90 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.90, na.rm = TRUE)[[1]])
+    
+    # Fit logistic regression adjusted for age, sex and total energy intake
+    formula_model <- as.formula(paste0(outcome, " ~ ", comp, " + RIAGENDR + RIDAGEYR + TOTALKCAL_PHDI_mean"))
+    model <- svyglm(formula_model, design = design, family = poisson(link = log))
+    
+    # Get coefficient for component
+    coef_summary <- summary(model)$coefficients
+    
+    # Extract coefficient for component (second row)
+    beta <- as.numeric(coef_summary[2, "Estimate"])[1]
+    pval <- as.numeric(coef_summary[2, "Pr(>|t|)"])[1]
+    
+    # Calculate OR for 90th vs 10th percentile
+    OR <- as.numeric(exp(beta * (p90 - p10)))[1]
+    or_matrix[i, j] <- OR
+    pval_matrix[i, j] <- pval
+  }
+}
+
+# Convert to data frame for ggplot
+or_df <- as.data.frame(or_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "OR") %>%
+  mutate(
+    Component = dash_labels[Component],
+    Component = factor(Component, levels = rev(dash_labels)),
+    Outcome = factor(Outcome, levels = outcomes)
+  )
+
+# Add p-values
+pval_df <- as.data.frame(pval_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "P_value") %>%
+  mutate(Component = dash_labels[Component])
+
+or_df <- or_df %>%
+  left_join(pval_df, by = c("Component", "Outcome")) %>%
+  mutate(
+    Significant = P_value < 0.05,
+    OR_display = ifelse(!is.na(OR), sprintf("%.2f", OR), "")
+  )
+
+# Create heatmap
+ggplot(or_df, aes(x = Outcome, y = Component, fill = OR)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = ifelse(Significant, paste0(OR_display, "*"), OR_display)), 
+            size = 2.8, color = "black") +
+  scale_fill_gradient2(
+    low = "#4CAF50",
+    mid = "white",
+    high = "#E91E63",
+    midpoint = 1,
+    limits = c(0.1, 2.0),
+    na.value = "grey90",
+    name = "Odds Ratio\n(90th vs 10th\npercentile)"
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Multivariable-adjusted Associations between DASH Components and Health Outcomes",
+    caption = "*P < 0.05 (age-adjusted)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    plot.caption = element_text(size = 9, hjust = 0),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+```
+
+\newpage
+
+```{r}
+#| label: fig-foodgroupmed-diseases
+#| fig-cap: "Multivariable-adjusted associations between Mediterranean Diet components and health outcomes (OR comparing 90th to 10th percentile)"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define Mediterranean components
+med_components <- c(
+  "MED_FRT", "MED_VEG", "MED_WGRAIN", "MED_LEGUMES", "MED_NUTS",
+  "MED_FISH", "MED_REDPROC_MEAT", "MED_MONSATFAT", "MED_ALCOHOL"
+)
+
+# Clean component names for display
+med_labels <- c(
+  "MED_FRT" = "Fruits",
+  "MED_VEG" = "Vegetables",
+  "MED_WGRAIN" = "Whole Grains",
+  "MED_LEGUMES" = "Legumes",
+  "MED_NUTS" = "Nuts",
+  "MED_FISH" = "Fish",
+  "MED_REDPROC_MEAT" = "Red/Processed Meat",
+  "MED_MONSATFAT" = "MUFA/SFA Ratio",
+  "MED_ALCOHOL" = "Alcohol"
+)
+
+# Create matrices to store ORs and p-values
+or_matrix <- matrix(NA, nrow = length(med_components), ncol = length(outcomes))
+pval_matrix <- matrix(NA, nrow = length(med_components), ncol = length(outcomes))
+rownames(or_matrix) <- med_components
+colnames(or_matrix) <- outcomes
+rownames(pval_matrix) <- med_components
+colnames(pval_matrix) <- outcomes
+
+# Calculate ORs comparing 90th to 10th percentile
+for (i in 1:length(med_components)) {
+  for (j in 1:length(outcomes)) {
+    comp <- med_components[i]
+    outcome <- outcomes[j]
+    
+    # Calculate 10th and 90th percentiles
+    p10 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.10, na.rm = TRUE)[[1]])
+    p90 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.90, na.rm = TRUE)[[1]])
+    
+    # Fit logistic regression adjusted for age, sex and total energy intake
+    formula_model <- as.formula(paste0(outcome, " ~ ", comp, " + RIAGENDR + RIDAGEYR + TOTALKCAL_PHDI_mean"))
+    model <- svyglm(formula_model, design = design, family = poisson(link = log))
+    
+    # Get coefficient for component
+    coef_summary <- summary(model)$coefficients
+    
+    # Extract coefficient for component (second row)
+    beta <- as.numeric(coef_summary[2, "Estimate"])[1]
+    pval <- as.numeric(coef_summary[2, "Pr(>|t|)"])[1]
+    
+    # Calculate OR for 90th vs 10th percentile
+    OR <- as.numeric(exp(beta * (p90 - p10)))[1]
+    or_matrix[i, j] <- OR
+    pval_matrix[i, j] <- pval
+  }
+}
+
+# Convert to data frame for ggplot
+or_df <- as.data.frame(or_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "OR") %>%
+  mutate(
+    Component = med_labels[Component],
+    Component = factor(Component, levels = rev(med_labels)),
+    Outcome = factor(Outcome, levels = outcomes)
+  )
+
+# Add p-values
+pval_df <- as.data.frame(pval_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "P_value") %>%
+  mutate(Component = med_labels[Component])
+
+or_df <- or_df %>%
+  left_join(pval_df, by = c("Component", "Outcome")) %>%
+  mutate(
+    Significant = P_value < 0.05,
+    OR_display = ifelse(!is.na(OR), sprintf("%.2f", OR), "")
+  )
+
+# Create heatmap
+ggplot(or_df, aes(x = Outcome, y = Component, fill = OR)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = ifelse(Significant, paste0(OR_display, "*"), OR_display)), 
+            size = 2.8, color = "black") +
+  scale_fill_gradient2(
+    low = "#4CAF50",
+    mid = "white",
+    high = "#E91E63",
+    midpoint = 1,
+    limits = c(0.1, 2.0),
+    na.value = "grey90",
+    name = "Odds Ratio\n(90th vs 10th\npercentile)"
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Multivariable-adjusted Associations between Mediterranean Diet Components and Health Outcomes",
+    caption = "*P < 0.05 (age-adjusted)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    plot.caption = element_text(size = 9, hjust = 0),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+```
+
+\newpage
+
+```{r}
+#| label: fig-foodgroupacs2020-diseases
+#| fig-cap: "Multivariable-adjusted associations between ACS2020 components and health outcomes (OR comparing 90th to 10th percentile)"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define ACS2020 components
+acs2020_components <- c(
+  "ACS2020_VEG", "ACS2020_VEG_ITEMS", "ACS2020_FRT", "ACS2020_FRT_ITEMS",
+  "ACS2020_WGRAIN", "ACS2020_REDPROC_MEAT", "ACS2020_HPFRG", "ACS2020_SSB_FRTJ"
+)
+
+# Clean component names for display
+acs2020_labels <- c(
+  "ACS2020_VEG" = "Vegetables",
+  "ACS2020_VEG_ITEMS" = "Vegetable Variety",
+  "ACS2020_FRT" = "Fruits",
+  "ACS2020_FRT_ITEMS" = "Fruit Variety",
+  "ACS2020_WGRAIN" = "Whole Grains",
+  "ACS2020_REDPROC_MEAT" = "Red/Processed Meat",
+  "ACS2020_HPFRG" = "Highly Processed Foods",
+  "ACS2020_SSB_FRTJ" = "SSB & Fruit Juice"
+)
+
+# Create matrices to store ORs and p-values
+or_matrix <- matrix(NA, nrow = length(acs2020_components), ncol = length(outcomes))
+pval_matrix <- matrix(NA, nrow = length(acs2020_components), ncol = length(outcomes))
+rownames(or_matrix) <- acs2020_components
+colnames(or_matrix) <- outcomes
+rownames(pval_matrix) <- acs2020_components
+colnames(pval_matrix) <- outcomes
+
+# Calculate ORs comparing 90th to 10th percentile
+for (i in 1:length(acs2020_components)) {
+  for (j in 1:length(outcomes)) {
+    comp <- acs2020_components[i]
+    outcome <- outcomes[j]
+    
+    # Calculate 10th and 90th percentiles
+    p10 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.10, na.rm = TRUE)[[1]])
+    p90 <- as.numeric(svyquantile(as.formula(paste0("~", comp)), design, quantiles = 0.90, na.rm = TRUE)[[1]])
+    
+    # Fit logistic regression adjusted for age, sex and total energy intake
+    formula_model <- as.formula(paste0(outcome, " ~ ", comp, " + RIAGENDR + RIDAGEYR + TOTALKCAL_PHDI_mean"))
+    model <- svyglm(formula_model, design = design, family = poisson(link = log))
+    
+    # Get coefficient for component
+    coef_summary <- summary(model)$coefficients
+    
+    # Extract coefficient for component (second row)
+    beta <- as.numeric(coef_summary[2, "Estimate"])[1]
+    pval <- as.numeric(coef_summary[2, "Pr(>|t|)"])[1]
+    
+    # Calculate OR for 90th vs 10th percentile
+    OR <- as.numeric(exp(beta * (p90 - p10)))[1]
+    or_matrix[i, j] <- OR
+    pval_matrix[i, j] <- pval
+  }
+}
+
+# Convert to data frame for ggplot
+or_df <- as.data.frame(or_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "OR") %>%
+  mutate(
+    Component = acs2020_labels[Component],
+    Component = factor(Component, levels = rev(acs2020_labels)),
+    Outcome = factor(Outcome, levels = outcomes)
+  )
+
+# Add p-values
+pval_df <- as.data.frame(pval_matrix) %>%
+  rownames_to_column("Component") %>%
+  pivot_longer(cols = -Component, names_to = "Outcome", values_to = "P_value") %>%
+  mutate(Component = acs2020_labels[Component])
+
+or_df <- or_df %>%
+  left_join(pval_df, by = c("Component", "Outcome")) %>%
+  mutate(
+    Significant = P_value < 0.05,
+    OR_display = ifelse(!is.na(OR), sprintf("%.2f", OR), "")
+  )
+
+# Create heatmap
+ggplot(or_df, aes(x = Outcome, y = Component, fill = OR)) +
+  geom_tile(color = "white", linewidth = 0.5) +
+  geom_text(aes(label = ifelse(Significant, paste0(OR_display, "*"), OR_display)), 
+            size = 2.8, color = "black") +
+  scale_fill_gradient2(
+    low = "#4CAF50",
+    mid = "white",
+    high = "#E91E63",
+    midpoint = 1,
+    limits = c(0.1, 2.0),
+    na.value = "grey90",
+    name = "Odds Ratio\n(90th vs 10th\npercentile)"
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Multivariable-adjusted Associations between ACS2020 Components and Health Outcomes",
+    caption = "*P < 0.05 (age-adjusted)"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.text.y = element_text(size = 10),
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    plot.caption = element_text(size = 9, hjust = 0),
+    legend.position = "right",
+    panel.grid = element_blank()
+  )
+```
+
+\newpage
+
+```{r}
+#| label: fig-phdi-components-year
 #| fig-cap: "PHDI component trends over NHANES cycles"
 #| fig-width: 12
 #| fig-height: 8
@@ -2373,4 +3258,378 @@ component_trend <- ggplot(component_survey_summary, aes(x = cycle_label, y = SE_
         legend.position = "right")
 
 component_trend
+```
+
+\newpage
+
+```{r}
+#| label: fig-hei2020-components-year
+#| fig-cap: "HEI-2020 component trends over NHANES cycles"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define HEI-2020 components
+hei2020_components <- c(
+  "HEI2020_TOTALFRT", "HEI2020_FRT", "HEI2020_VEG", "HEI2020_GREENNBEAN",
+  "HEI2020_TOTALPRO", "HEI2020_SEAPLANTPRO", "HEI2020_WHOLEGRAIN", "HEI2020_DAIRY",
+  "HEI2020_FATTYACID", "HEI2020_REFINEDGRAIN", "HEI2020_SODIUM", "HEI2020_ADDEDSUGAR",
+  "HEI2020_SATFAT"
+)
+
+# Calculate weighted mean and SE of HEI-2020 components by cycle
+all_component_summaries <- list()
+
+for (comp in hei2020_components) {
+  comp_summary <- svyby(as.formula(paste0("~", comp)), ~ cycle, design2y, svymean, na.rm = TRUE) %>%
+    as.data.frame() %>%
+    rename(mean_score = !!sym(comp), SE_score = !!sym(comp)) %>%
+    mutate(component = comp)
+  
+  all_component_summaries[[comp]] <- comp_summary
+}
+
+# Combine all summaries
+component_survey_summary <- bind_rows(all_component_summaries) %>%
+  mutate(
+    component_label = case_when(
+      component == "HEI2020_TOTALFRT" ~ "Total Fruits",
+      component == "HEI2020_FRT" ~ "Whole Fruits",
+      component == "HEI2020_VEG" ~ "Total Vegetables",
+      component == "HEI2020_GREENNBEAN" ~ "Greens and Beans",
+      component == "HEI2020_TOTALPRO" ~ "Total Protein",
+      component == "HEI2020_SEAPLANTPRO" ~ "Seafood & Plant Protein",
+      component == "HEI2020_WHOLEGRAIN" ~ "Whole Grains",
+      component == "HEI2020_DAIRY" ~ "Dairy",
+      component == "HEI2020_FATTYACID" ~ "Fatty Acids Ratio",
+      component == "HEI2020_REFINEDGRAIN" ~ "Refined Grains",
+      component == "HEI2020_SODIUM" ~ "Sodium",
+      component == "HEI2020_ADDEDSUGAR" ~ "Added Sugars",
+      component == "HEI2020_SATFAT" ~ "Saturated Fats"
+    ),
+    cycle_label = case_when(
+      cycle == "0506" ~ "2005-2006",
+      cycle == "0708" ~ "2007-2008",
+      cycle == "0910" ~ "2009-2010",
+      cycle == "1112" ~ "2011-2012",
+      cycle == "1314" ~ "2013-2014",
+      cycle == "1516" ~ "2015-2016",
+      cycle == "1718" ~ "2017-2018",
+      TRUE ~ cycle
+    ),
+    cycle_label = factor(cycle_label, levels = c("2005-2006", "2007-2008", "2009-2010", 
+                                                   "2011-2012", "2013-2014", "2015-2016", "2017-2018"))
+  )
+
+# Plot all HEI-2020 components with error bars
+component_trend <- ggplot(component_survey_summary, aes(x = cycle_label, y = SE_score, color = component_label, group = component_label)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = SE_score - se, ymax = SE_score + se), width = 0.2) +
+  theme_bw() +
+  labs(x = "NHANES Cycle", y = "Mean Component Score", color = "HEI-2020 Component") +
+  theme(plot.title = element_text(size = 22),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "right")
+
+component_trend
+```
+
+\newpage
+
+```{r}
+#| label: fig-ahei-components-year
+#| fig-cap: "AHEI component trends over NHANES cycles"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define AHEI components
+ahei_components <- c(
+  "AHEI_VEG", "AHEI_FRT", "AHEI_WGRAIN", "AHEI_NUTSLEG", "AHEI_N3FAT",
+  "AHEI_PUFA", "AHEI_SSB_FRTJ", "AHEI_REDPROC_MEAT", "AHEI_SODIUM", "AHEI_ALCOHOL"
+)
+
+# Calculate weighted mean and SE of AHEI components by cycle
+all_component_summaries <- list()
+
+for (comp in ahei_components) {
+  comp_summary <- svyby(as.formula(paste0("~", comp)), ~ cycle, design2y, svymean, na.rm = TRUE) %>%
+    as.data.frame() %>%
+    rename(mean_score = !!sym(comp), SE_score = !!sym(comp)) %>%
+    mutate(component = comp)
+  
+  all_component_summaries[[comp]] <- comp_summary
+}
+
+# Combine all summaries
+component_survey_summary <- bind_rows(all_component_summaries) %>%
+  mutate(
+    component_label = case_when(
+      component == "AHEI_VEG" ~ "Vegetables",
+      component == "AHEI_FRT" ~ "Fruits",
+      component == "AHEI_WGRAIN" ~ "Whole Grains",
+      component == "AHEI_NUTSLEG" ~ "Nuts & Legumes",
+      component == "AHEI_N3FAT" ~ "Omega-3 Fatty Acids",
+      component == "AHEI_PUFA" ~ "PUFA",
+      component == "AHEI_SSB_FRTJ" ~ "SSB & Fruit Juice",
+      component == "AHEI_REDPROC_MEAT" ~ "Red/Processed Meat",
+      component == "AHEI_SODIUM" ~ "Sodium",
+      component == "AHEI_ALCOHOL" ~ "Alcohol"
+    ),
+    cycle_label = case_when(
+      cycle == "0506" ~ "2005-2006",
+      cycle == "0708" ~ "2007-2008",
+      cycle == "0910" ~ "2009-2010",
+      cycle == "1112" ~ "2011-2012",
+      cycle == "1314" ~ "2013-2014",
+      cycle == "1516" ~ "2015-2016",
+      cycle == "1718" ~ "2017-2018",
+      TRUE ~ cycle
+    ),
+    cycle_label = factor(cycle_label, levels = c("2005-2006", "2007-2008", "2009-2010", 
+                                                   "2011-2012", "2013-2014", "2015-2016", "2017-2018"))
+  )
+
+# Plot all AHEI components with error bars
+component_trend <- ggplot(component_survey_summary, aes(x = cycle_label, y = SE_score, color = component_label, group = component_label)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = SE_score - se, ymax = SE_score + se), width = 0.2) +
+  theme_bw() +
+  labs(x = "NHANES Cycle", y = "Mean Component Score", color = "AHEI Component") +
+  theme(plot.title = element_text(size = 22),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "right")
+
+component_trend
+```
+
+\newpage
+
+```{r}
+#| label: fig-dash-components-year
+#| fig-cap: "DASH component trends over NHANES cycles"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define DASH components
+dash_components <- c(
+  "DASH_FRT", "DASH_VEG", "DASH_NUTSLEG", "DASH_WGRAIN", "DASH_LOWF_DAIRY",
+  "DASH_SODIUM", "DASH_REDPROC_MEAT", "DASH_SSB_FRTJ"
+)
+
+# Calculate weighted mean and SE of DASH components by cycle
+all_component_summaries <- list()
+
+for (comp in dash_components) {
+  comp_summary <- svyby(as.formula(paste0("~", comp)), ~ cycle, design2y, svymean, na.rm = TRUE) %>%
+    as.data.frame() %>%
+    rename(mean_score = !!sym(comp), SE_score = !!sym(comp)) %>%
+    mutate(component = comp)
+  
+  all_component_summaries[[comp]] <- comp_summary
+}
+
+# Combine all summaries
+component_survey_summary <- bind_rows(all_component_summaries) %>%
+  mutate(
+    component_label = case_when(
+      component == "DASH_FRT" ~ "Fruits",
+      component == "DASH_VEG" ~ "Vegetables",
+      component == "DASH_NUTSLEG" ~ "Nuts & Legumes",
+      component == "DASH_WGRAIN" ~ "Whole Grains",
+      component == "DASH_LOWF_DAIRY" ~ "Low-Fat Dairy",
+      component == "DASH_SODIUM" ~ "Sodium",
+      component == "DASH_REDPROC_MEAT" ~ "Red/Processed Meat",
+      component == "DASH_SSB_FRTJ" ~ "SSB & Fruit Juice"
+    ),
+    cycle_label = case_when(
+      cycle == "0506" ~ "2005-2006",
+      cycle == "0708" ~ "2007-2008",
+      cycle == "0910" ~ "2009-2010",
+      cycle == "1112" ~ "2011-2012",
+      cycle == "1314" ~ "2013-2014",
+      cycle == "1516" ~ "2015-2016",
+      cycle == "1718" ~ "2017-2018",
+      TRUE ~ cycle
+    ),
+    cycle_label = factor(cycle_label, levels = c("2005-2006", "2007-2008", "2009-2010", 
+                                                   "2011-2012", "2013-2014", "2015-2016", "2017-2018"))
+  )
+
+# Plot all DASH components with error bars
+component_trend <- ggplot(component_survey_summary, aes(x = cycle_label, y = SE_score, color = component_label, group = component_label)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = SE_score - se, ymax = SE_score + se), width = 0.2) +
+  theme_bw() +
+  labs(x = "NHANES Cycle", y = "Mean Component Score", color = "DASH Component") +
+  theme(plot.title = element_text(size = 22),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "right")
+
+component_trend
+```
+
+\newpage
+
+```{r}
+#| label: fig-med-components-year
+#| fig-cap: "Mediterranean Diet component trends over NHANES cycles"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define Mediterranean components
+med_components <- c(
+  "MED_FRT", "MED_VEG", "MED_WGRAIN", "MED_LEGUMES", "MED_NUTS",
+  "MED_FISH", "MED_REDPROC_MEAT", "MED_MONSATFAT", "MED_ALCOHOL"
+)
+
+# Calculate weighted mean and SE of Mediterranean components by cycle
+all_component_summaries <- list()
+
+for (comp in med_components) {
+  comp_summary <- svyby(as.formula(paste0("~", comp)), ~ cycle, design2y, svymean, na.rm = TRUE) %>%
+    as.data.frame() %>%
+    rename(mean_score = !!sym(comp), SE_score = !!sym(comp)) %>%
+    mutate(component = comp)
+  
+  all_component_summaries[[comp]] <- comp_summary
+}
+
+# Combine all summaries
+component_survey_summary <- bind_rows(all_component_summaries) %>%
+  mutate(
+    component_label = case_when(
+      component == "MED_FRT" ~ "Fruits",
+      component == "MED_VEG" ~ "Vegetables",
+      component == "MED_WGRAIN" ~ "Whole Grains",
+      component == "MED_LEGUMES" ~ "Legumes",
+      component == "MED_NUTS" ~ "Nuts",
+      component == "MED_FISH" ~ "Fish",
+      component == "MED_REDPROC_MEAT" ~ "Red/Processed Meat",
+      component == "MED_MONSATFAT" ~ "MUFA/SFA Ratio",
+      component == "MED_ALCOHOL" ~ "Alcohol"
+    ),
+    cycle_label = case_when(
+      cycle == "0506" ~ "2005-2006",
+      cycle == "0708" ~ "2007-2008",
+      cycle == "0910" ~ "2009-2010",
+      cycle == "1112" ~ "2011-2012",
+      cycle == "1314" ~ "2013-2014",
+      cycle == "1516" ~ "2015-2016",
+      cycle == "1718" ~ "2017-2018",
+      TRUE ~ cycle
+    ),
+    cycle_label = factor(cycle_label, levels = c("2005-2006", "2007-2008", "2009-2010", 
+                                                   "2011-2012", "2013-2014", "2015-2016", "2017-2018"))
+  )
+
+# Plot all Mediterranean components with error bars
+component_trend <- ggplot(component_survey_summary, aes(x = cycle_label, y = SE_score, color = component_label, group = component_label)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = SE_score - se, ymax = SE_score + se), width = 0.2) +
+  theme_bw() +
+  labs(x = "NHANES Cycle", y = "Mean Component Score", color = "Mediterranean Component") +
+  theme(plot.title = element_text(size = 22),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "right")
+
+component_trend
+```
+
+\newpage
+
+```{r}
+#| label: fig-acs2020-components-year
+#| fig-cap: "ACS2020 component trends over NHANES cycles"
+#| fig-width: 12
+#| fig-height: 8
+
+# Define ACS2020 components
+acs2020_components <- c(
+  "ACS2020_VEG", "ACS2020_VEG_ITEMS", "ACS2020_FRT", "ACS2020_FRT_ITEMS",
+  "ACS2020_WGRAIN", "ACS2020_REDPROC_MEAT", "ACS2020_HPFRG", "ACS2020_SSB_FRTJ"
+)
+
+# Calculate weighted mean and SE of ACS2020 components by cycle
+all_component_summaries <- list()
+
+for (comp in acs2020_components) {
+  comp_summary <- svyby(as.formula(paste0("~", comp)), ~ cycle, design2y, svymean, na.rm = TRUE) %>%
+    as.data.frame() %>%
+    rename(mean_score = !!sym(comp), SE_score = !!sym(comp)) %>%
+    mutate(component = comp)
+  
+  all_component_summaries[[comp]] <- comp_summary
+}
+
+# Combine all summaries
+component_survey_summary <- bind_rows(all_component_summaries) %>%
+  mutate(
+    component_label = case_when(
+      component == "ACS2020_VEG" ~ "Vegetables",
+      component == "ACS2020_VEG_ITEMS" ~ "Vegetable Variety",
+      component == "ACS2020_FRT" ~ "Fruits",
+      component == "ACS2020_FRT_ITEMS" ~ "Fruit Variety",
+      component == "ACS2020_WGRAIN" ~ "Whole Grains",
+      component == "ACS2020_REDPROC_MEAT" ~ "Red/Processed Meat",
+      component == "ACS2020_HPFRG" ~ "Highly Processed Foods",
+      component == "ACS2020_SSB_FRTJ" ~ "SSB & Fruit Juice"
+    ),
+    cycle_label = case_when(
+      cycle == "0506" ~ "2005-2006",
+      cycle == "0708" ~ "2007-2008",
+      cycle == "0910" ~ "2009-2010",
+      cycle == "1112" ~ "2011-2012",
+      cycle == "1314" ~ "2013-2014",
+      cycle == "1516" ~ "2015-2016",
+      cycle == "1718" ~ "2017-2018",
+      TRUE ~ cycle
+    ),
+    cycle_label = factor(cycle_label, levels = c("2005-2006", "2007-2008", "2009-2010", 
+                                                   "2011-2012", "2013-2014", "2015-2016", "2017-2018"))
+  )
+
+# Plot all ACS2020 components with error bars
+component_trend <- ggplot(component_survey_summary, aes(x = cycle_label, y = SE_score, color = component_label, group = component_label)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  geom_errorbar(aes(ymin = SE_score - se, ymax = SE_score + se), width = 0.2) +
+  theme_bw() +
+  labs(x = "NHANES Cycle", y = "Mean Component Score", color = "ACS2020 Component") +
+  theme(plot.title = element_text(size = 22),
+        axis.title.x = element_text(size = 18),
+        axis.title.y = element_text(size = 18),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1),
+        axis.text.y = element_text(size = 14),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(size = 14),
+        legend.position = "right")
+
+component_trend
+```
+
+```{r}
+
 ```
